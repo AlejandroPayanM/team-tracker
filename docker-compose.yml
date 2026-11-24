@@ -1,0 +1,14 @@
+# Postgres local para desarrollo: `docker compose up -d`
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: tracker
+      POSTGRES_PASSWORD: tracker-dev-only
+      POSTGRES_DB: tracker
+    ports:
+      - "127.0.0.1:5440:5432" # 5440 para no chocar con otro Postgres local
+    volumes:
+      - tracker-data:/var/lib/postgresql/data
+volumes:
+  tracker-data:

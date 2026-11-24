@@ -1,0 +1,175 @@
+// PostgreSQL. Local: `npm run db:up` (docker-compose.yml). Producción: Neon + Vercel (ver README).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url       = env("DATABASE_URL") // en Neon: la URL con "-pooler" (para la app)
+  directUrl = env("DIRECT_URL") // en Neon: la URL directa (para migraciones)
+}
+
+// ───────── Usuarios de la app (quienes consultan el tablero) ─────────
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("VIEWER") // ADMIN | VIEWER
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  notes        MemberNote[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique // sha256 del token; el token real solo vive en la cookie
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ip        String?
+  userAgent String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ip        String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+// ───────── Compañeros a los que se da seguimiento ─────────
+model Member {
+  id          String    @id @default(cuid())
+  name        String
+  email       String    @unique // correo de trabajo: se usa para ubicar su usuario en Zoho
+  zohoEmail   String? // solo si su correo en Zoho es distinto
+  githubLogin String?   @unique // minúsculas
+  zohoUserId  String?
+  position    String?
+  startedAt   DateTime  @default(now())
+  archivedAt  DateTime? // baja lógica: conserva todo el historial
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  pullRequests PullRequest[]
+  reviews      PrReview[]
+  zohoTasks    ZohoTask[]
+  notes        MemberNote[]
+}
+
+model PullRequest {
+  id            String    @id @default(cuid())
+  githubId      String    @unique // node id de GitHub
+  repo          String // owner/name
+  number        Int
+  title         String
+  url           String
+  state         String // OPEN | CLOSED | MERGED
+  isDraft       Boolean   @default(false)
+  authorLogin   String // minúsculas
+  memberId      String?
+  member        Member?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  createdAtGh   DateTime
+  updatedAtGh   DateTime
+  mergedAt      DateTime?
+  closedAt      DateTime?
+  firstReviewAt DateTime?
+  additions     Int       @default(0)
+  deletions     Int       @default(0)
+  changedFiles  Int       @default(0)
+  commentsCount Int       @default(0)
+  reviews       PrReview[]
+
+  @@index([memberId, createdAtGh])
+  @@index([memberId, mergedAt])
+  @@index([authorLogin])
+  @@index([state])
+}
+
+model PrReview {
+  id            String      @id @default(cuid())
+  githubId      String      @unique
+  pullRequestId String
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  reviewerLogin String // minúsculas
+  memberId      String?
+  member        Member?     @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  state         String // APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED
+  submittedAt   DateTime
+
+  @@index([memberId, submittedAt])
+}
+
+model ZohoTask {
+  id          String    @id @default(cuid())
+  zohoId      String    @unique
+  projectId   String
+  projectName String
+  name        String
+  status      String
+  completed   Boolean   @default(false)
+  priority    String?
+  url         String?
+  createdAtZ  DateTime?
+  updatedAtZ  DateTime?
+  completedAt DateTime? // aproximado: ver comentario en zoho sync
+  dueDate     DateTime?
+  members     Member[]
+
+  @@index([completedAt])
+  @@index([updatedAtZ])
+}
+
+// ───────── Seguimiento: notas y acuerdos por compañero ─────────
+model MemberNote {
+  id        String    @id @default(cuid())
+  memberId  String
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  kind      String    @default("NOTE") // NOTE | ACTION
+  body      String
+  done      Boolean   @default(false)
+  dueDate   DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([memberId, createdAt])
+}
+
+// ───────── Operación ─────────
+model SyncRun {
+  id         String    @id @default(cuid())
+  source     String // GITHUB | ZOHO
+  trigger    String // manual | cron | member-added | cli
+  status     String // RUNNING | OK | ERROR
+  items      Int       @default(0)
+  error      String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([source, startedAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  userEmail String?
+  action    String
+  target    String?
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
