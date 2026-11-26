@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/icons";
 
 export type SyncStatus = { lastOkAt: string | null; lastAttemptAt: string | null; lastFailed: boolean; running: boolean };
 
@@ -83,18 +84,36 @@ export function SyncBar({ initial }: { initial: SyncStatus }) {
   }, [tick]);
 
   const working = busy || status.running;
+  const warn = Boolean(error) || status.lastFailed;
   return (
     <div className="flex items-center gap-2 text-xs text-slate-500" aria-live="polite">
       <span
-        className={`inline-block h-2 w-2 rounded-full ${working ? "animate-pulse bg-sky-500" : error || status.lastFailed ? "bg-amber-500" : "bg-emerald-500"}`}
+        className={`inline-block h-2 w-2 shrink-0 rounded-full ${working ? "animate-pulse bg-sky-500" : warn ? "bg-amber-500" : "bg-emerald-500"}`}
         aria-hidden
       />
-      <span>
-        {working ? "Sincronizando…" : error ? error : `Datos: ${ago(status.lastOkAt, now)}`}
-        {!working && !error && status.lastFailed && <span className="text-amber-700"> · último intento con error</span>}
+      <span className="max-w-[9.5rem] truncate sm:max-w-none">
+        {working ? (
+          "Sincronizando…"
+        ) : error ? (
+          error
+        ) : (
+          <>
+            <span className="hidden sm:inline">Datos: </span>
+            {ago(status.lastOkAt, now)}
+          </>
+        )}
+        {!working && !error && status.lastFailed && <span className="hidden text-amber-700 sm:inline"> · último intento con error</span>}
       </span>
-      <button type="button" className="btn-ghost !px-2 !py-1 text-xs" disabled={busy} onClick={() => void tick(true)} title="Traer ahora lo que haya cambiado">
-        ↻ Actualizar
+      <button
+        type="button"
+        className="btn-ghost btn-sm !px-2.5"
+        disabled={busy}
+        onClick={() => void tick(true)}
+        title="Traer ahora lo que haya cambiado"
+        aria-label="Actualizar datos"
+      >
+        <Icon name="refresh" className={`h-4 w-4 ${working ? "animate-spin" : ""}`} />
+        <span className="hidden sm:inline">Actualizar</span>
       </button>
     </div>
   );

@@ -1,33 +1,206 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-canvas: #f5f6fa;
+  --color-ink: #0f172a;
 }
 
-body {
-  background: #f8fafc;
-  color: #0f172a;
+/*
+ * IMPORTANTE: los estilos propios van dentro de las capas de Tailwind (base / components). Si quedaran sueltos,
+ * pisarían a las utilidades (p. ej. `.btn-ghost` con `lg:hidden`, o `.rtable td` con `max-sm:hidden`).
+ */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Foco visible y coherente para teclado. */
+  :focus-visible {
+    outline: 2px solid #6366f1;
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+  }
 }
 
-.input {
-  @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200;
+@layer components {
+  /* ───────── Formularios ───────── */
+  /* 16 px en móvil evita que iOS haga zoom al enfocar un campo. */
+  .input {
+    @apply min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 shadow-xs outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 sm:min-h-10 sm:text-sm;
+  }
+  /* Campo bloqueado: gris, sin sombra y con cursor de "no permitido", para que no parezca editable. */
+  .input:disabled {
+    @apply cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 shadow-none placeholder:text-slate-400;
+  }
+  select.input {
+    @apply pr-8;
+  }
+
+  /* ───────── Botones (44 px de alto en táctil, 40 px con mouse) ───────── */
+  .btn,
+  .btn-ghost,
+  .btn-danger {
+    @apply inline-flex min-h-11 select-none items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10;
+  }
+  .btn {
+    @apply bg-indigo-600 text-white shadow-xs hover:bg-indigo-700 active:bg-indigo-800;
+  }
+  .btn-ghost {
+    @apply border border-slate-300 bg-white text-slate-700 shadow-xs hover:bg-slate-50 active:bg-slate-100;
+  }
+  .btn-danger {
+    @apply border border-red-300 bg-white text-red-700 hover:bg-red-50 active:bg-red-100;
+  }
+  .btn-sm {
+    @apply min-h-9 px-3 text-xs sm:min-h-8;
+  }
+
+  /* Atajos / etiquetas seleccionables. */
+  .chip {
+    @apply inline-flex min-h-9 shrink-0 items-center whitespace-nowrap rounded-full border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 sm:min-h-8;
+  }
+  .chip-active {
+    @apply border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-600;
+  }
+
+  /* ───────── Tablas ───────── */
+  .th {
+    @apply whitespace-nowrap px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500;
+  }
+  .td {
+    @apply px-3 py-3 text-sm;
+  }
+
+  /* Desplazamiento horizontal cómodo en táctil, con barra discreta. */
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /*
+   * Tabla "responsiva": en pantallas chicas cada fila pasa a ser una tarjeta con sus etiquetas.
+   * Cada <td> debe llevar data-label; un <td data-primary> actúa como título de la tarjeta.
+   */
+  @media (max-width: 639px) {
+    .rtable thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .rtable,
+    .rtable tbody,
+    .rtable tr,
+    .rtable td {
+      display: block;
+    }
+    .rtable,
+    .rtable tr,
+    .rtable td {
+      width: 100%;
+    }
+    /* El cuerpo lleva margen lateral (mx-4): su ancho debe ser automático, no 100 %, o se sale de la pantalla. */
+    .rtable tbody {
+      width: auto;
+    }
+    .rtable tbody > tr {
+      margin-bottom: 0.75rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 0.75rem;
+      background: #fff;
+      padding: 0.375rem 0.875rem;
+      box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+    }
+    .rtable td {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      border: 0;
+      padding: 0.4rem 0;
+      text-align: right;
+    }
+    .rtable td + td {
+      border-top: 1px dashed #eef0f4;
+    }
+    .rtable td::before {
+      content: attr(data-label);
+      flex-shrink: 0;
+      text-align: left;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+    .rtable td[data-primary] {
+      justify-content: flex-start;
+      padding-top: 0.55rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-align: left;
+    }
+    .rtable td[data-primary]::before,
+    .rtable td[data-empty-label]::before {
+      display: none;
+    }
+    .rtable td:empty {
+      display: none;
+    }
+  }
 }
-/* Campo bloqueado: gris, sin sombra y con cursor de "no permitido", para que no parezca editable. */
-.input:disabled {
-  @apply cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 shadow-none placeholder:text-slate-400;
+
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
 }
-.btn {
-  @apply inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60;
+
+@layer utilities {
+  /* Margen inferior para el borde de pantalla en móviles con "notch". */
+  .pb-safe {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
 }
-.btn-ghost {
-  @apply inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
-.btn-danger {
-  @apply inline-flex items-center justify-center rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60;
-}
-.th {
-  @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500;
-}
-.td {
-  @apply px-3 py-2 text-sm;
+
+@media print {
+  aside,
+  header[data-app-chrome],
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
 }

@@ -55,8 +55,8 @@ export function IntegrationCard({
 }
 
 function Msg({ state }: { state: FormState }) {
-  if (state.error) return <p role="alert" className="text-sm text-red-600">{state.error}</p>;
-  if (state.ok) return <p className="text-sm text-emerald-700">{state.ok}</p>;
+  if (state.error) return <p role="alert" className="break-words text-sm text-red-600">{state.error}</p>;
+  if (state.ok) return <p className="break-words text-sm text-emerald-700">{state.ok}</p>;
   return null;
 }
 
@@ -151,11 +151,11 @@ export function GithubCredentialsForm({
       <form action={action} className="space-y-3">
         <Field name="token" label="Token de GitHub" info={token} disabled={!encryptionReady} hint="Se prueba contra GitHub antes de guardarse" />
         <Field name="org" label="Organización" info={org} hint="Vacío = buscar en todo lo que el token pueda ver" />
-        <label className="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" name="skipTest" /> Guardar sin probar
+        <label className="flex min-h-10 items-center gap-3 text-xs text-slate-600">
+          <input type="checkbox" name="skipTest" className="h-5 w-5 rounded border-slate-300 accent-indigo-600" /> Guardar sin probar
         </label>
-        <div className="flex flex-wrap items-center gap-3">
-          <SubmitButton>Guardar y probar</SubmitButton>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <SubmitButton className="btn w-full sm:w-auto">Guardar y probar</SubmitButton>
           <Msg state={state} />
         </div>
       </form>
@@ -190,11 +190,11 @@ export function ZohoCredentialsForm({ fields, encryptionReady }: { fields: ZohoF
         <Field name="refreshToken" label="Refresh token" info={fields.refreshToken} disabled={!encryptionReady} />
         <Field name="portalId" label="ID del portal" info={fields.portalId} hint="Numérico" />
         <Field name="portalName" label="Nombre del portal (opcional)" info={fields.portalName} hint="Para armar links a las tareas" />
-        <label className="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" name="skipTest" /> Guardar sin probar
+        <label className="flex min-h-10 items-center gap-3 text-xs text-slate-600">
+          <input type="checkbox" name="skipTest" className="h-5 w-5 rounded border-slate-300 accent-indigo-600" /> Guardar sin probar
         </label>
-        <div className="flex flex-wrap items-center gap-3">
-          <SubmitButton>Guardar y probar</SubmitButton>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <SubmitButton className="btn w-full sm:w-auto">Guardar y probar</SubmitButton>
           <Msg state={state} />
         </div>
       </form>

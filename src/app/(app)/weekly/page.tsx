@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { addWeeks, formatDate, parseRange } from "@/lib/weeks";
 import { listRepos, parseRepo } from "@/lib/filters";
-import { Badge, Card, Empty, RangeNav, prBadge } from "@/components/ui";
+import { Badge, Card, Empty, Notice, PageHeader, RangeNav, prBadge } from "@/components/ui";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -44,14 +44,12 @@ export default async function WeeklyPage({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Detalle semanal</h1>
-        <RangeNav base="/weekly" range={weekRange} repos={repos} repo={repo} />
-      </div>
+      <PageHeader title="Detalle semanal" description="Qué hizo cada persona: PRs, reviews y tareas del periodo." />
+      <RangeNav base="/weekly" range={weekRange} repos={repos} repo={repo} />
       {repo && (
-        <p className="text-sm text-indigo-800">
-          Viendo solo el repositorio <strong>{repo}</strong>. Las tareas de Zoho no se filtran por repositorio y no se listan.
-        </p>
+        <Notice>
+          Viendo solo el repositorio <strong className="break-all">{repo}</strong>. Las tareas de Zoho no se filtran por repositorio y no se listan.
+        </Notice>
       )}
 
       {members.length === 0 && (
@@ -75,7 +73,7 @@ export default async function WeeklyPage({
             {empty ? (
               <p className="text-sm text-amber-700">Sin actividad registrada en {multi ? "este periodo" : "esta semana"}.</p>
             ) : (
-              <div className="grid gap-4 md:grid-cols-3 text-sm">
+              <div className="grid gap-5 text-sm md:grid-cols-3 md:gap-6">
                 <div>
                   <h3 className="mb-1 text-xs font-semibold uppercase text-slate-500">Pull requests</h3>
                   {m.pullRequests.length === 0 ? (
@@ -84,11 +82,11 @@ export default async function WeeklyPage({
                     <ul className="space-y-2">
                       {m.pullRequests.map((p) => (
                         <li key={p.id}>
-                          <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
+                          <a href={p.url} target="_blank" rel="noopener noreferrer" className="break-all font-medium text-indigo-700 hover:underline">
                             {p.repo}#{p.number}
                           </a>{" "}
                           {prBadge(p.state, p.isDraft)}
-                          <div className="truncate text-xs text-slate-500">
+                          <div className="line-clamp-2 text-xs text-slate-500">
                             {multi && `${formatDate(p.createdAtGh)} · `}
                             {p.title}
                           </div>
@@ -105,11 +103,11 @@ export default async function WeeklyPage({
                     <ul className="space-y-2">
                       {m.reviews.map((r) => (
                         <li key={r.id}>
-                          <a href={r.pullRequest.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
+                          <a href={r.pullRequest.url} target="_blank" rel="noopener noreferrer" className="break-all font-medium text-indigo-700 hover:underline">
                             {r.pullRequest.repo}#{r.pullRequest.number}
                           </a>{" "}
                           <Badge tone={r.state === "APPROVED" ? "green" : r.state === "CHANGES_REQUESTED" ? "red" : "gray"}>{r.state.toLowerCase().replace("_", " ")}</Badge>
-                          <div className="truncate text-xs text-slate-500">
+                          <div className="line-clamp-2 text-xs text-slate-500">
                             {multi && `${formatDate(r.submittedAt)} · `}
                             {r.pullRequest.title}
                           </div>
@@ -138,7 +136,7 @@ export default async function WeeklyPage({
                 </div>
               </div>
             )}
-            <Link href={`/team/${m.id}`} className="mt-3 inline-block text-xs text-indigo-600 hover:underline">
+            <Link href={`/team/${m.id}`} className="mt-4 inline-flex min-h-9 items-center text-sm font-medium text-indigo-600 hover:underline">
               Ver perfil completo →
             </Link>
           </Card>

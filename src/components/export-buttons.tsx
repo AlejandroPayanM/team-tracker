@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "@/components/icons";
 
 type Format = "xlsx" | "pdf" | "png";
 
@@ -79,22 +80,26 @@ export function ExportButtons({
   }
 
   const btn = "btn-ghost disabled:cursor-wait";
+  const item = (format: Format, label: string) => (
+    <button type="button" className={btn} disabled={busy !== null} onClick={() => run(format)}>
+      <Icon name="download" className="h-4 w-4 shrink-0" />
+      {busy === format ? "Generando…" : label}
+    </button>
+  );
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-medium text-slate-600">Exportar:</span>
-      <button type="button" className={btn} disabled={busy !== null} onClick={() => run("xlsx")}>
-        {busy === "xlsx" ? "Generando…" : "Excel (.xlsx)"}
-      </button>
-      <button type="button" className={btn} disabled={busy !== null} onClick={() => run("pdf")}>
-        {busy === "pdf" ? "Generando…" : "PDF"}
-      </button>
-      <button type="button" className={btn} disabled={busy !== null} onClick={() => run("png")}>
-        {busy === "png" ? "Generando…" : "Imagen (.png)"}
-      </button>
-      {error && (
-        <span role="alert" className="text-sm text-red-600">
-          {error}
+    <div className="no-print space-y-2 xl:shrink-0">
+      <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center">
+        <span className="col-span-3 text-xs font-semibold uppercase tracking-wide text-slate-500 sm:col-span-1 sm:mr-1 sm:text-sm sm:font-medium sm:normal-case sm:tracking-normal">
+          Exportar
         </span>
+        {item("xlsx", "Excel")}
+        {item("pdf", "PDF")}
+        {item("png", "Imagen")}
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
       )}
     </div>
   );

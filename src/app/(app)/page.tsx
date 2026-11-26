@@ -5,7 +5,7 @@ import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { countPendingBackfill } from "@/lib/sync";
 import { parseRange, relativeDays, shortDate, weekParam } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, RangeNav, Stat } from "@/components/ui";
+import { Badge, Bars, Card, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -51,29 +51,27 @@ export default async function Dashboard({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Resumen del equipo</h1>
-        <RangeNav base="/" range={range} repos={repos} repo={repo} />
-      </div>
+      <PageHeader title="Resumen del equipo" description="Actividad de PRs y tareas en el periodo elegido, comparada con el periodo previo." />
+      <RangeNav base="/" range={range} repos={repos} repo={repo} />
 
       {repo && (
-        <div className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-900">
-          Viendo solo el repositorio <strong>{repo}</strong>. Las tareas de Zoho no pertenecen a un repositorio, por eso no se muestran.{" "}
+        <Notice>
+          Viendo solo el repositorio <strong className="break-all">{repo}</strong>. Las tareas de Zoho no pertenecen a un repositorio, por eso no se muestran.{" "}
           <Link href={`/?from=${weekParam(range.start)}&to=${weekParam(range.end)}`} className="font-medium underline">
             Ver todos
           </Link>
-        </div>
+        </Notice>
       )}
 
       {pendingBackfill > 0 && (
-        <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+        <Notice tone="sky">
           {pendingBackfill === 1 ? "1 compañero tiene" : `${pendingBackfill} compañeros tienen`} su historial pendiente de traer, por
           eso quizá falten datos. Se completa en la próxima sincronización o ahora mismo desde{" "}
           <Link href="/settings" className="font-medium underline">Integraciones</Link>.
-        </div>
+        </Notice>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+      <div className={STAT_GRID_5}>
         <Stat label="PRs creados" value={cur.prsOpened} prev={prev.prsOpened} />
         <Stat label="PRs mergeados" value={cur.prsMerged} prev={prev.prsMerged} />
         <Stat label="PRs abiertos al cierre" value={cur.openAtEnd} prev={prev.openAtEnd} />
@@ -109,43 +107,43 @@ export default async function Dashboard({
             Aún no hay compañeros. <Link className="text-indigo-600 underline" href="/team">Agrega el primero</Link>.
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
               <thead>
                 <tr className="border-b border-slate-100">
                   {["Compañero", "PRs creados", "Mergeados", "Reviews", "Líneas +/− (PRs creados)", "Prom. a merge", "Tareas Zoho", "PRs abiertos hoy", ""].map(
-                    (h) => (
-                      <th key={h} className="th">
+                    (h, i) => (
+                      <th key={i} className="th">
                         {h}
                       </th>
                     ),
                   )}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
                 {members.map((m) => {
                   const s = sumStats(series.byMember.get(m.id)?.slice(-weeks) ?? []);
                   const avg = avgMergeHours(s);
                   return (
                     <tr key={m.id} className="hover:bg-slate-50">
-                      <td className="td font-medium">
+                      <td className="td font-medium" data-primary>
                         <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>
                           {m.name}
                         </Link>
                         {!m.githubLogin && <div className="text-xs font-normal text-amber-700">sin usuario de GitHub</div>}
                       </td>
-                      <td className="td">{s.prsOpened}</td>
-                      <td className="td">{s.prsMerged}</td>
-                      <td className="td">{s.reviews}</td>
-                      <td className="td text-xs">
-                        <span className="text-emerald-700">+{s.additions}</span> / <span className="text-red-700">−{s.deletions}</span>
+                      <td className="td tabular-nums" data-label="PRs creados">{s.prsOpened}</td>
+                      <td className="td tabular-nums" data-label="Mergeados">{s.prsMerged}</td>
+                      <td className="td tabular-nums" data-label="Reviews">{s.reviews}</td>
+                      <td className="td text-xs tabular-nums" data-label="Líneas +/−">
+                        <span><span className="text-emerald-700">+{s.additions}</span> / <span className="text-red-700">−{s.deletions}</span></span>
                       </td>
-                      <td className="td">{avg === null ? "—" : avg < 48 ? `${avg.toFixed(1)} h` : `${(avg / 24).toFixed(1)} d`}</td>
-                      <td className="td">
-                        {s.tasksCompleted} <span className="text-xs text-slate-400">/ {s.tasksTouched} tocadas</span>
+                      <td className="td tabular-nums" data-label="Prom. a merge">{avg === null ? "—" : avg < 48 ? `${avg.toFixed(1)} h` : `${(avg / 24).toFixed(1)} d`}</td>
+                      <td className="td tabular-nums" data-label="Tareas Zoho">
+                        <span>{s.tasksCompleted} <span className="text-xs text-slate-400">/ {s.tasksTouched} tocadas</span></span>
                       </td>
-                      <td className="td">{openByMember.get(m.id) ?? 0}</td>
-                      <td className="td">{isIdle(s) && <Badge tone="amber">Sin actividad</Badge>}</td>
+                      <td className="td tabular-nums" data-label="Abiertos hoy">{openByMember.get(m.id) ?? 0}</td>
+                      <td className="td" data-empty-label>{isIdle(s) && <Badge tone="amber">Sin actividad</Badge>}</td>
                     </tr>
                   );
                 })}
@@ -162,11 +160,11 @@ export default async function Dashboard({
           ) : (
             <ul className="divide-y divide-slate-100 text-sm">
               {stale.slice(0, 10).map((p) => (
-                <li key={p.id} className="py-2">
-                  <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
+                <li key={p.id} className="py-2.5">
+                  <a href={p.url} target="_blank" rel="noopener noreferrer" className="break-all font-medium text-indigo-700 hover:underline">
                     {p.repo}#{p.number}
                   </a>{" "}
-                  {p.title}
+                  <span className="break-words">{p.title}</span>
                   <div className="text-xs text-slate-500">
                     {p.member?.name} · {relativeDays(p.createdAtGh)}
                   </div>
@@ -181,8 +179,8 @@ export default async function Dashboard({
               const ok = lastOk(src);
               const last = lastRuns.find((r) => r.source === src);
               return (
-                <li key={src} className="flex items-center justify-between">
-                  <span>{src === "GITHUB" ? "GitHub" : "Zoho Projects"}</span>
+                <li key={src} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <span className="font-medium">{src === "GITHUB" ? "GitHub" : "Zoho Projects"}</span>
                   <span className="text-slate-500">
                     {ok ? `última OK ${relativeDays(ok.startedAt)}` : "nunca sincronizado"}
                     {last && last.status === "ERROR" && <Badge tone="red">último intento con error</Badge>}

@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { requireUser } from "@/lib/auth";
 import { settingsOverview, type SettingKey, type SettingView } from "@/lib/settings";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Card, PageHeader } from "@/components/ui";
 import { IntegrationPanel } from "@/components/forms";
 import { GithubCredentialsForm, IntegrationCard, ZohoCredentialsForm, type FieldInfo } from "@/components/credentials-forms";
 import { formatDateTime } from "@/lib/weeks";
@@ -56,9 +56,9 @@ export default async function SettingsPage() {
 
   return (
     <>
-      <h1 className="text-xl font-semibold">Integraciones</h1>
+      <PageHeader title="Integraciones" description="Conexión con GitHub y Zoho Projects, sincronización y bitácora." />
 
-      <div className="grid items-start gap-4 md:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         <IntegrationCard
           title="GitHub"
           canConfigure={isAdmin && !!overview}
@@ -129,56 +129,64 @@ export default async function SettingsPage() {
       )}
 
       <Card title="Últimas sincronizaciones">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-slate-100">
-              {["Fuente", "Origen", "Estado", "Nuevos o cambiados", "Inicio", "Duración", "Detalle"].map((h) => (
-                <th key={h} className="th">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {runs.map((r) => (
-              <tr key={r.id}>
-                <td className="td">{r.source}</td>
-                <td className="td">{r.trigger}</td>
-                <td className="td">
-                  <Badge tone={STATUS_TONE[r.status as keyof typeof STATUS_TONE] ?? "blue"}>{STATUS_LABEL[r.status] ?? r.status}</Badge>
-                </td>
-                <td className="td">{r.items}</td>
-                <td className="td">{formatDateTime(r.startedAt)}</td>
-                <td className="td whitespace-nowrap">
-                  {r.finishedAt ? `${((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000).toFixed(1)} s` : "—"}
-                </td>
-                <td className="td max-w-xs truncate text-xs text-slate-500" title={r.error ?? ""}>{r.error ?? ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-
-      {isAdmin && (
-        <Card title="Auditoría (últimos 30 eventos)">
-          <table className="w-full">
+        <div className="scroll-x -mx-4 sm:-mx-5">
+          <table className="rtable w-full">
             <thead>
               <tr className="border-b border-slate-100">
-                {["Fecha", "Usuario", "Acción", "Detalle", "IP"].map((h) => (
+                {["Fuente", "Origen", "Estado", "Nuevos o cambiados", "Inicio", "Duración", "Detalle"].map((h) => (
                   <th key={h} className="th">{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {logs.map((l) => (
-                <tr key={l.id}>
-                  <td className="td whitespace-nowrap">{formatDateTime(l.createdAt)}</td>
-                  <td className="td">{l.userEmail ?? "—"}</td>
-                  <td className="td font-mono text-xs">{l.action}</td>
-                  <td className="td max-w-xs truncate text-xs text-slate-500" title={l.detail ?? ""}>{l.detail ?? ""}</td>
-                  <td className="td text-xs">{l.ip ?? ""}</td>
+            <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
+              {runs.map((r) => (
+                <tr key={r.id}>
+                  <td className="td font-medium" data-primary>
+                    {r.source === "GITHUB" ? "GitHub" : r.source === "ZOHO" ? "Zoho" : r.source}
+                  </td>
+                  <td className="td" data-label="Origen">{r.trigger}</td>
+                  <td className="td" data-label="Estado">
+                    <Badge tone={STATUS_TONE[r.status as keyof typeof STATUS_TONE] ?? "blue"}>{STATUS_LABEL[r.status] ?? r.status}</Badge>
+                  </td>
+                  <td className="td tabular-nums" data-label="Nuevos o cambiados">{r.items}</td>
+                  <td className="td whitespace-nowrap" data-label="Inicio">{formatDateTime(r.startedAt)}</td>
+                  <td className="td whitespace-nowrap tabular-nums" data-label="Duración">
+                    {r.finishedAt ? `${((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000).toFixed(1)} s` : "—"}
+                  </td>
+                  <td className="td max-w-xs truncate text-xs text-slate-500 max-sm:max-w-none max-sm:whitespace-normal max-sm:break-words" title={r.error ?? ""} data-label="Detalle">
+                    {r.error ?? ""}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      </Card>
+
+      {isAdmin && (
+        <Card title="Auditoría (últimos 30 eventos)">
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  {["Fecha", "Usuario", "Acción", "Detalle", "IP"].map((h) => (
+                    <th key={h} className="th">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
+                {logs.map((l) => (
+                  <tr key={l.id}>
+                    <td className="td whitespace-nowrap" data-primary>{formatDateTime(l.createdAt)}</td>
+                    <td className="td break-all" data-label="Usuario">{l.userEmail ?? "—"}</td>
+                    <td className="td font-mono text-xs" data-label="Acción">{l.action}</td>
+                    <td className="td max-w-xs truncate text-xs text-slate-500 max-sm:max-w-none max-sm:whitespace-normal max-sm:break-words" title={l.detail ?? ""} data-label="Detalle">{l.detail ?? ""}</td>
+                    <td className="td text-xs" data-label="IP">{l.ip ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
     </>

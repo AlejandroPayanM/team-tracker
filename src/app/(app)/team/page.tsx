@@ -2,11 +2,11 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import { requireUser } from "@/lib/auth";
-import { Badge, Card, Empty } from "@/components/ui";
-import { MemberForm } from "@/components/forms";
+import { Badge, Card, Empty, PageHeader } from "@/components/ui";
+import { Icon } from "@/components/icons";
+import { MemberForm, SubmitButton } from "@/components/forms";
 import { restoreMemberAction } from "@/app/actions";
 import { formatDate } from "@/lib/weeks";
-import { SubmitButton } from "@/components/forms";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // las acciones de sincronización corren en esta ruta
@@ -22,54 +22,65 @@ export default async function TeamPage() {
 
   return (
     <>
-      <h1 className="text-xl font-semibold">Equipo</h1>
+      <PageHeader title="Equipo" description="Personas a las que das seguimiento. Quitar a alguien lo archiva y conserva su historial." />
 
       {isAdmin && (
-        <Card title="Agregar compañero">
-          <MemberForm />
-          <p className="mt-3 text-xs text-slate-500">
-            Al agregarlo se trae su historial de GitHub y Zoho en segundo plano (el periodo depende de SYNC_LOOKBACK_DAYS).
-          </p>
-        </Card>
+        <details className="group rounded-xl border border-slate-200 bg-white shadow-xs" open={active.length === 0 || undefined}>
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 text-sm font-semibold text-slate-800 sm:px-5 [&::-webkit-details-marker]:hidden">
+            <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
+              <Icon name="team" className="h-4 w-4" />
+            </span>
+            Agregar compañero
+            <Icon name="chevron" className="ml-auto h-4 w-4 text-slate-400 transition group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-slate-100 p-4 sm:p-5">
+            <MemberForm />
+            <p className="mt-3 text-xs text-slate-500">
+              Al agregarlo se trae su historial de GitHub y Zoho en segundo plano (el periodo depende de SYNC_LOOKBACK_DAYS).
+            </p>
+          </div>
+        </details>
       )}
 
       <Card title={`Activos (${active.length})`}>
         {active.length === 0 ? (
           <Empty>No hay compañeros activos.</Empty>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100">
-                {["Nombre", "Correo", "GitHub", "Zoho", "Puesto", "Desde"].map((h) => (
-                  <th key={h} className="th">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {active.map((m) => (
-                <tr key={m.id} className="hover:bg-slate-50">
-                  <td className="td font-medium">
-                    <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
-                  </td>
-                  <td className="td">{m.email}</td>
-                  <td className="td">
-                    {m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}
-                    {m.githubLogin && cfg.githubConfigured && !m.githubSyncedAt && (
-                      <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
-                    )}
-                  </td>
-                  <td className="td">
-                    {m.zohoUserId ? <Badge tone="green">vinculado</Badge> : <Badge tone="gray">pendiente</Badge>}
-                    {cfg.zohoConfigured && !m.zohoSyncedAt && (
-                      <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
-                    )}
-                  </td>
-                  <td className="td">{m.position ?? "—"}</td>
-                  <td className="td">{formatDate(m.startedAt)}</td>
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  {["Nombre", "Correo", "GitHub", "Zoho", "Puesto", "Desde"].map((h) => (
+                    <th key={h} className="th">{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
+                {active.map((m) => (
+                  <tr key={m.id} className="hover:bg-slate-50">
+                    <td className="td font-medium" data-primary>
+                      <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
+                    </td>
+                    <td className="td break-all" data-label="Correo">{m.email}</td>
+                    <td className="td" data-label="GitHub">
+                      <span className="inline-flex flex-col items-end gap-0.5 sm:items-start">
+                        {m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}
+                        {m.githubLogin && cfg.githubConfigured && !m.githubSyncedAt && <Badge tone="blue">historial pendiente</Badge>}
+                      </span>
+                    </td>
+                    <td className="td" data-label="Zoho">
+                      <span className="inline-flex flex-col items-end gap-0.5 sm:items-start">
+                        {m.zohoUserId ? <Badge tone="green">vinculado</Badge> : <Badge tone="gray">pendiente</Badge>}
+                        {cfg.zohoConfigured && !m.zohoSyncedAt && <Badge tone="blue">historial pendiente</Badge>}
+                      </span>
+                    </td>
+                    <td className="td" data-label="Puesto">{m.position ?? "—"}</td>
+                    <td className="td whitespace-nowrap" data-label="Desde">{formatDate(m.startedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -77,15 +88,15 @@ export default async function TeamPage() {
         <Card title={`Archivados (${archived.length})`}>
           <ul className="divide-y divide-slate-100">
             {archived.map((m) => (
-              <li key={m.id} className="flex items-center justify-between py-2 text-sm">
-                <span>
-                  <Link className="font-medium text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>{" "}
-                  <span className="text-slate-500">· archivado {formatDate(m.archivedAt)}</span>
+              <li key={m.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 text-sm">
+                <span className="min-w-0">
+                  <Link className="font-medium text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
+                  <span className="block text-xs text-slate-500 sm:ml-2 sm:inline">archivado {formatDate(m.archivedAt)}</span>
                 </span>
                 {isAdmin && (
                   <form action={restoreMemberAction}>
                     <input type="hidden" name="id" value={m.id} />
-                    <SubmitButton className="btn-ghost">Restaurar</SubmitButton>
+                    <SubmitButton className="btn-ghost btn-sm">Restaurar</SubmitButton>
                   </form>
                 )}
               </li>

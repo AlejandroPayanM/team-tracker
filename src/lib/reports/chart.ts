@@ -40,16 +40,18 @@ function empty(w: number, h: number): string {
 export function chartInner(chart: ChartData, w: number, h: number, withTitle = true): string {
   const n = chart.values.length;
   const titleH = withTitle ? 34 : 8;
-  const head = withTitle ? text(w / 2, 22, chart.title, { anchor: "middle", size: 15, weight: "bold" }) : "";
+  const head = withTitle ? text(w / 2, 22, clip(chart.title, Math.floor(w / 8.4)), { anchor: "middle", size: 15, weight: "bold" }) : "";
   if (!n || chart.values.every((v) => v === 0)) return head + empty(w, h);
 
   const k = chart.kind;
   const max = Math.max(...chart.values);
 
   if (chart.type === "pie") {
-    const cx = Math.min(w * 0.3, 230);
-    const cy = titleH + (h - titleH) / 2;
-    const r = Math.min(cx - 20, (h - titleH) / 2 - 16);
+    // En ancho angosto (celular) la dona va arriba y la leyenda debajo, a lo ancho.
+    const narrow = w < 560;
+    const r = narrow ? Math.min(w / 2 - 28, 120) : Math.min(Math.min(w * 0.3, 230) - 20, (h - titleH) / 2 - 16);
+    const cx = narrow ? w / 2 : Math.min(w * 0.3, 230);
+    const cy = narrow ? titleH + r + 8 : titleH + (h - titleH) / 2;
     const total = chart.values.reduce((a, b) => a + Math.max(0, b), 0);
     let angle = -Math.PI / 2;
     let slices = "";
@@ -71,15 +73,17 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
       angle += a;
     });
     const center = text(cx, cy - 2, fmtVal(total, k), { anchor: "middle", size: 18, weight: "bold" }) + text(cx, cy + 16, "total", { anchor: "middle", size: 11, fill: MUTED });
-    const lx = cx + r + 40;
-    const rowH = Math.min(24, (h - titleH - 10) / n);
+    const lx = narrow ? 20 : cx + r + 40;
+    const rowH = narrow ? 22 : Math.min(24, (h - titleH - 10) / n);
+    const legendTop = narrow ? cy + r + 30 : titleH + 14;
+    const legendChars = narrow ? Math.floor((w - lx - 28) / 6.6) - 12 : 30;
     const legend = chart.values
       .map((v, i) => {
-        const y = titleH + 14 + i * rowH;
+        const y = legendTop + i * rowH;
         const pct = total ? Math.round((v / total) * 100) : 0;
         return (
           `<rect x="${lx}" y="${y - 10}" width="12" height="12" rx="2" fill="${PALETTE[i % PALETTE.length]}"/>` +
-          text(lx + 20, y, `${clip(chart.categories[i]!, 30)} — ${fmtVal(v, k)} (${pct}%)`, { size: 12 })
+          text(lx + 20, y, `${clip(chart.categories[i]!, legendChars)} — ${fmtVal(v, k)} (${pct}%)`, { size: 12 })
         );
       })
       .join("");
@@ -87,8 +91,9 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
   }
 
   if (chart.type === "hbar") {
-    const left = 190;
-    const right = 60;
+    const left = w < 560 ? Math.round(w * 0.36) : 190; // margen proporcional: en celular deja sitio a las barras
+    const right = w < 560 ? 44 : 60;
+    const labelChars = Math.floor((left - 12) / 6.4);
     const rowH = (h - titleH - 14) / n;
     const bh = Math.min(22, rowH * 0.7);
     const { top } = niceScale(max);
@@ -98,7 +103,7 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
         const y = titleH + i * rowH + (rowH - bh) / 2;
         const bw = (v / top) * pw;
         return (
-          text(left - 8, y + bh / 2 + 4, clip(chart.categories[i]!, 28), { anchor: "end", size: 12 }) +
+          text(left - 8, y + bh / 2 + 4, clip(chart.categories[i]!, labelChars), { anchor: "end", size: 12 }) +
           `<rect x="${left}" y="${y.toFixed(1)}" width="${Math.max(bw, v > 0 ? 2 : 0).toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${PALETTE[0]}"/>` +
           text(left + bw + 6, y + bh / 2 + 4, fmtVal(v, k), { size: 11, fill: MUTED })
         );
@@ -108,9 +113,10 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
   }
 
   // bar / line: ejes con rejilla
+  const narrow = w < 560;
   const left = 56;
-  const right = 20;
-  const dense = n > 14;
+  const right = narrow ? 12 : 20;
+  const dense = n > (narrow ? 8 : 14); // etiquetas inclinadas cuando no caben rectas
   const bottom = dense ? 78 : 40;
   const pw = w - left - right;
   const ph = h - titleH - bottom;
@@ -121,7 +127,7 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
     grid += `<line x1="${left}" y1="${y.toFixed(1)}" x2="${w - right}" y2="${y.toFixed(1)}" stroke="${GRID}"/>` + text(left - 8, y + 4, fmtVal(v, k), { anchor: "end", size: 11, fill: MUTED });
   }
   const slot = pw / n;
-  const labelEvery = n > 30 ? Math.ceil(n / 15) : 1;
+  const labelEvery = n > 30 ? Math.ceil(n / 15) : narrow && n > 12 ? Math.ceil(n / 12) : 1;
   const xLabels = chart.categories
     .map((c, i) => {
       if (i % labelEvery) return "";
@@ -131,7 +137,7 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
     })
     .join("");
   const axis = `<line x1="${left}" y1="${titleH + ph}" x2="${w - right}" y2="${titleH + ph}" stroke="#94a3b8"/>`;
-  const showValues = n <= 20;
+  const showValues = n <= (narrow ? 10 : 20);
   const yOf = (v: number) => titleH + ph - (v / top) * ph;
 
   if (chart.type === "line") {
@@ -160,7 +166,17 @@ export function chartInner(chart: ChartData, w: number, h: number, withTitle = t
 
 /** Gráfica como documento SVG independiente (pantalla y conversión a PNG). */
 export function renderChartSvg(chart: ChartData, width = 900, height?: number, withTitle = true): string {
-  const h = height ?? (chart.type === "hbar" ? Math.max(300, 60 + chart.values.length * 30) : 420);
+  const narrow = width < 560;
+  const n = chart.values.length;
+  const h =
+    height ??
+    (chart.type === "hbar"
+      ? Math.max(300, 60 + n * 30)
+      : chart.type === "pie" && narrow
+        ? 34 + 2 * 120 + 16 + 30 + n * 22 + 16 // dona arriba y leyenda debajo
+        : narrow
+          ? 340
+          : 420);
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${h}" width="${width}" height="${h}" role="img" aria-label="${esc(chart.title)}">` +
     `<rect width="${width}" height="${h}" fill="#fff"/>${chartInner(chart, width, h, withTitle)}</svg>`

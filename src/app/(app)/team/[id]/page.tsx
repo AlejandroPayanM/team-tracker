@@ -6,7 +6,8 @@ import { requireUser } from "@/lib/auth";
 import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, RangeNav, Stat, prBadge } from "@/components/ui";
+import { Badge, Bars, Card, Empty, Notice, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
+import { Icon } from "@/components/icons";
 import { DeleteMemberForm, MemberForm, NoteForm, SubmitButton } from "@/components/forms";
 import { archiveMemberAction, deleteNoteAction, restoreMemberAction, toggleNoteAction } from "@/app/actions";
 
@@ -56,26 +57,32 @@ export default async function MemberPage({
 
   return (
     <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/team" className="text-xs font-medium text-slate-500 hover:text-slate-800">← Equipo</Link>
+          </div>
+          <h1 className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
             {m.name} {m.archivedAt && <Badge tone="gray">Archivado</Badge>}
           </h1>
-          <p className="text-sm text-slate-500">
-            {m.position ? `${m.position} · ` : ""}
-            {m.email} ·{" "}
-            {m.githubLogin ? (
-              <a className="text-indigo-600 hover:underline" href={`https://github.com/${m.githubLogin}`} target="_blank" rel="noopener noreferrer">
-                @{m.githubLogin}
-              </a>
-            ) : (
-              <span className="text-amber-700">sin usuario de GitHub</span>
-            )}{" "}
-            · Zoho: {m.zohoUserId ? "vinculado" : "sin vincular"} · desde {formatDate(m.startedAt)}
-          </p>
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+            {m.position && <dd>{m.position}</dd>}
+            <dd className="break-all">{m.email}</dd>
+            <dd>
+              {m.githubLogin ? (
+                <a className="text-indigo-600 hover:underline" href={`https://github.com/${m.githubLogin}`} target="_blank" rel="noopener noreferrer">
+                  @{m.githubLogin}
+                </a>
+              ) : (
+                <span className="text-amber-700">sin usuario de GitHub</span>
+              )}
+            </dd>
+            <dd>Zoho: {m.zohoUserId ? "vinculado" : "sin vincular"}</dd>
+            <dd>Desde {formatDate(m.startedAt)}</dd>
+          </dl>
           {!m.archivedAt &&
             ((cfg.githubConfigured && m.githubLogin && !m.githubSyncedAt) || (cfg.zohoConfigured && !m.zohoSyncedAt)) && (
-              <p className="mt-1 text-sm text-sky-700">
+              <p className="mt-2 text-sm text-sky-700">
                 Su historial aún no se ha traído por completo. Se hará en la próxima sincronización, o ahora desde{" "}
                 <Link href="/settings" className="underline">Integraciones</Link>.
               </p>
@@ -83,14 +90,14 @@ export default async function MemberPage({
         </div>
         {isAdmin &&
           (m.archivedAt ? (
-            <form action={restoreMemberAction}>
+            <form action={restoreMemberAction} className="shrink-0">
               <input type="hidden" name="id" value={m.id} />
-              <SubmitButton className="btn-ghost">Restaurar</SubmitButton>
+              <SubmitButton className="btn-ghost w-full sm:w-auto">Restaurar</SubmitButton>
             </form>
           ) : (
-            <form action={archiveMemberAction}>
+            <form action={archiveMemberAction} className="shrink-0">
               <input type="hidden" name="id" value={m.id} />
-              <SubmitButton className="btn-danger" confirm={`¿Archivar a ${m.name}? Su historial se conserva y puedes restaurarlo.`}>
+              <SubmitButton className="btn-danger w-full sm:w-auto" confirm={`¿Archivar a ${m.name}? Su historial se conserva y puedes restaurarlo.`}>
                 Archivar
               </SubmitButton>
             </form>
@@ -99,12 +106,12 @@ export default async function MemberPage({
 
       <RangeNav base={`/team/${m.id}`} range={range} repos={repos} repo={repo} />
       {repo && (
-        <p className="text-sm text-indigo-800">
-          Viendo solo el repositorio <strong>{repo}</strong> (las tareas de Zoho no se filtran por repositorio y no se muestran en las tarjetas ni gráficas).
-        </p>
+        <Notice>
+          Viendo solo el repositorio <strong className="break-all">{repo}</strong> (las tareas de Zoho no se filtran por repositorio y no se muestran en las tarjetas ni gráficas).
+        </Notice>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className={STAT_GRID_5}>
         <Stat label="PRs creados" value={inRange.prsOpened} />
         <Stat label="PRs mergeados" value={inRange.prsMerged} />
         <Stat label="PRs abiertos al cierre" value={inRange.openAtEnd} />
@@ -146,15 +153,21 @@ export default async function MemberPage({
                 {n.kind === "ACTION" ? (
                   <form action={toggleNoteAction}>
                     <input type="hidden" name="id" value={n.id} />
-                    <button disabled={!isAdmin} className="mt-0.5 h-5 w-5 rounded border border-slate-400 text-xs leading-none" aria-label={n.done ? "Marcar pendiente" : "Marcar hecho"}>
-                      {n.done ? "✓" : ""}
+                    <button
+                      disabled={!isAdmin}
+                      className={`grid h-7 w-7 place-items-center rounded-md border-2 text-sm font-bold leading-none transition ${
+                        n.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-transparent hover:border-indigo-400"
+                      }`}
+                      aria-label={n.done ? "Marcar pendiente" : "Marcar hecho"}
+                    >
+                      ✓
                     </button>
                   </form>
                 ) : (
-                  <span className="mt-0.5 w-5 text-center text-slate-400">•</span>
+                  <span className="grid h-7 w-7 place-items-center text-slate-400">•</span>
                 )}
-                <div className="flex-1">
-                  <p className={`whitespace-pre-wrap ${n.done ? "text-slate-400 line-through" : ""}`}>{n.body}</p>
+                <div className="min-w-0 flex-1">
+                  <p className={`whitespace-pre-wrap break-words ${n.done ? "text-slate-400 line-through" : ""}`}>{n.body}</p>
                   <p className="text-xs text-slate-500">
                     {n.author?.name ?? "—"} · {formatDate(n.createdAt)}
                     {n.dueDate && ` · límite ${formatDate(n.dueDate)}`}
@@ -164,7 +177,7 @@ export default async function MemberPage({
                 {isAdmin && (
                   <form action={deleteNoteAction}>
                     <input type="hidden" name="id" value={n.id} />
-                    <SubmitButton className="text-xs text-slate-400 hover:text-red-600" confirm="¿Borrar esta nota?">
+                    <SubmitButton className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600" confirm="¿Borrar esta nota?">
                       Borrar
                     </SubmitButton>
                   </form>
@@ -220,8 +233,8 @@ export default async function MemberPage({
         {prs.length === 0 ? (
           <Empty>Sin PRs sincronizados.</Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
               <thead>
                 <tr className="border-b border-slate-100">
                   {["PR", "Estado", "Creado", "Merge", "Cambios", "Review"].map((h) => (
@@ -229,22 +242,24 @@ export default async function MemberPage({
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
                 {prs.map((p) => (
                   <tr key={p.id}>
-                    <td className="td">
-                      <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
-                        {p.repo}#{p.number}
-                      </a>
-                      <div className="max-w-md truncate text-xs text-slate-500">{p.title}</div>
+                    <td className="td" data-primary>
+                      <div className="min-w-0">
+                        <a href={p.url} target="_blank" rel="noopener noreferrer" className="break-all font-medium text-indigo-700 hover:underline">
+                          {p.repo}#{p.number}
+                        </a>
+                        <div className="max-w-md truncate text-xs font-normal text-slate-500 max-sm:max-w-none max-sm:whitespace-normal">{p.title}</div>
+                      </div>
                     </td>
-                    <td className="td">{prBadge(p.state, p.isDraft)}</td>
-                    <td className="td">{formatDate(p.createdAtGh)}</td>
-                    <td className="td">{formatDate(p.mergedAt)}</td>
-                    <td className="td text-xs">
-                      <span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.
+                    <td className="td" data-label="Estado">{prBadge(p.state, p.isDraft)}</td>
+                    <td className="td whitespace-nowrap" data-label="Creado">{formatDate(p.createdAtGh)}</td>
+                    <td className="td whitespace-nowrap" data-label="Merge">{formatDate(p.mergedAt)}</td>
+                    <td className="td text-xs" data-label="Cambios">
+                      <span><span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.</span>
                     </td>
-                    <td className="td text-xs">{p.firstReviewAt ? relativeDays(p.firstReviewAt) : "—"}</td>
+                    <td className="td text-xs" data-label="1.er review">{p.firstReviewAt ? relativeDays(p.firstReviewAt) : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -254,9 +269,15 @@ export default async function MemberPage({
       </Card>
 
       {isAdmin && (
-        <Card title="Editar datos">
-          <MemberForm member={m} />
-        </Card>
+        <details className="group rounded-xl border border-slate-200 bg-white shadow-xs">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 text-sm font-semibold text-slate-800 sm:px-5 [&::-webkit-details-marker]:hidden">
+            Editar datos
+            <Icon name="chevron" className="ml-auto h-4 w-4 text-slate-400 transition group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-slate-100 p-4 sm:p-5">
+            <MemberForm member={m} />
+          </div>
+        </details>
       )}
       {isAdmin && m.archivedAt && (
         <Card title="Zona de peligro">

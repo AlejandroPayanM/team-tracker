@@ -39,8 +39,8 @@ export function SubmitButton({
 }
 
 function Msg({ state }: { state: FormState }) {
-  if (state.error) return <p role="alert" className="text-sm text-red-600">{state.error}</p>;
-  if (state.ok) return <p className="text-sm text-emerald-700">{state.ok}</p>;
+  if (state.error) return <p role="alert" className="break-words text-sm text-red-600">{state.error}</p>;
+  if (state.ok) return <p className="break-words text-sm text-emerald-700">{state.ok}</p>;
   return null;
 }
 
@@ -80,8 +80,8 @@ export function PasswordForm() {
         Repite la nueva contraseña
         <input name="confirm" type="password" autoComplete="new-password" required minLength={12} maxLength={200} className="input mt-1" />
       </label>
-      <div className="flex items-center gap-3">
-        <SubmitButton>Cambiar contraseña</SubmitButton>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <SubmitButton className="btn w-full sm:w-auto">Cambiar contraseña</SubmitButton>
         <Msg state={state} />
       </div>
     </form>
@@ -122,8 +122,8 @@ export function MemberForm({ member }: { member?: MemberDefaults }) {
         Correo en Zoho <span className="font-normal text-slate-500">(solo si es distinto al correo de arriba)</span>
         <input name="zohoEmail" type="email" defaultValue={member?.zohoEmail ?? ""} className="input mt-1" />
       </label>
-      <div className="flex items-center gap-3 sm:col-span-2">
-        <SubmitButton>{member?.id ? "Guardar cambios" : "Agregar compañero"}</SubmitButton>
+      <div className="flex flex-col gap-3 sm:col-span-2 sm:flex-row sm:items-center">
+        <SubmitButton className="btn w-full sm:w-auto">{member?.id ? "Guardar cambios" : "Agregar compañero"}</SubmitButton>
         <Msg state={state} />
       </div>
     </form>
@@ -136,16 +136,19 @@ export function NoteForm({ memberId }: { memberId: string }) {
     <form action={action} className="space-y-2">
       <input type="hidden" name="memberId" value={memberId} />
       <textarea name="body" required maxLength={2000} rows={3} className="input" placeholder="Nota de seguimiento, acuerdo o tema pendiente…" />
-      <div className="flex flex-wrap items-center gap-2">
-        <select name="kind" className="input w-auto" defaultValue="NOTE">
-          <option value="NOTE">Nota</option>
-          <option value="ACTION">Acuerdo / pendiente</option>
-        </select>
-        <label className="flex items-center gap-1 text-sm text-slate-600">
-          Fecha límite
-          <input name="dueDate" type="date" className="input w-auto" />
+      <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-end">
+        <label className="block text-xs font-medium text-slate-500">
+          Tipo
+          <select name="kind" className="input mt-1 sm:w-auto" defaultValue="NOTE">
+            <option value="NOTE">Nota</option>
+            <option value="ACTION">Acuerdo / pendiente</option>
+          </select>
         </label>
-        <SubmitButton>Agregar</SubmitButton>
+        <label className="block text-xs font-medium text-slate-500">
+          Fecha límite (opcional)
+          <input name="dueDate" type="date" className="input mt-1 sm:w-auto" />
+        </label>
+        <SubmitButton className="btn w-full sm:w-auto">Agregar</SubmitButton>
         <Msg state={state} />
       </div>
     </form>
@@ -161,9 +164,9 @@ export function DeleteMemberForm({ id, email }: { id: string; email: string }) {
         Elimina definitivamente a este compañero y su historial de seguimiento (notas). Los PRs quedan sin asignar.
         Escribe <strong>{email}</strong> para confirmar.
       </p>
-      <div className="flex gap-2">
-        <input name="confirm" className="input" autoComplete="off" />
-        <SubmitButton className="btn-danger">Eliminar</SubmitButton>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input name="confirm" className="input" autoComplete="off" aria-label="Correo para confirmar" />
+        <SubmitButton className="btn-danger w-full sm:w-auto">Eliminar</SubmitButton>
       </div>
       <Msg state={state} />
     </form>
@@ -176,14 +179,14 @@ export function IntegrationPanel() {
   return (
     <div className="space-y-4">
       <form action={testAction} className="space-y-2">
-        <SubmitButton className="btn-ghost">Probar conexiones</SubmitButton>
+        <SubmitButton className="btn-ghost w-full sm:w-auto">Probar conexiones</SubmitButton>
         <Msg state={testState} />
       </form>
       <form action={syncAction} className="space-y-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <SubmitButton>Sincronizar ahora</SubmitButton>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input type="checkbox" name="full" /> Completa (reconsulta todo el periodo)
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <SubmitButton className="btn w-full sm:w-auto">Sincronizar ahora</SubmitButton>
+          <label className="flex min-h-10 items-center gap-3 text-sm text-slate-600">
+            <input type="checkbox" name="full" className="h-5 w-5 rounded border-slate-300 accent-indigo-600" /> Completa (reconsulta todo el periodo)
           </label>
         </div>
         <Msg state={syncState} />

@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { avgMergeHours, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { addWeeks, formatDate, parseRange, shortDate, weekParam } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, RangeNav, Stat, prBadge } from "@/components/ui";
+import { Badge, Bars, Card, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -94,24 +94,19 @@ export default async function PrsPage({
 
   return (
     <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Pull requests</h1>
-          <p className="text-sm text-slate-500">Vista general del equipo, por repositorio o todos juntos.</p>
-        </div>
-        <RangeNav base="/prs" range={range} repos={repos} repo={repo} />
-      </div>
+      <PageHeader title="Pull requests" description="Vista general del equipo, por repositorio o todos juntos." />
+      <RangeNav base="/prs" range={range} repos={repos} repo={repo} />
 
       {repo && (
-        <div className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-900">
-          Viendo solo el repositorio <strong>{repo}</strong>.{" "}
+        <Notice>
+          Viendo solo el repositorio <strong className="break-all">{repo}</strong>.{" "}
           <Link href={`/prs${qs()}`} className="font-medium underline">
             Ver todos los repositorios
           </Link>
-        </div>
+        </Notice>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+      <div className={STAT_GRID_5}>
         <Stat label="PRs creados" value={cur.prsOpened} prev={prev.prsOpened} />
         <Stat label="PRs mergeados" value={cur.prsMerged} prev={prev.prsMerged} />
         <Stat label="Cerrados sin merge" value={cur.prsClosed} prev={prev.prsClosed} />
@@ -154,8 +149,8 @@ export default async function PrsPage({
           {repoRows.length === 0 ? (
             <Empty>Sin actividad de PRs en este periodo.</Empty>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="scroll-x -mx-4 sm:-mx-5">
+              <table className="rtable w-full">
                 <thead>
                   <tr className="border-b border-slate-100">
                     {["Repositorio", "Creados", "", "Mergeados", "Abiertos ahora", "Prom. a merge", "Personas"].map((h, i) => (
@@ -163,20 +158,20 @@ export default async function PrsPage({
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
                   {repoRows.map((r) => (
                     <tr key={r.repo} className="hover:bg-slate-50">
-                      <td className="td font-medium">
-                        <Link className="text-indigo-700 hover:underline" href={`/prs${qs(r.repo)}`}>{r.repo}</Link>
+                      <td className="td font-medium" data-primary>
+                        <Link className="break-all text-indigo-700 hover:underline" href={`/prs${qs(r.repo)}`}>{r.repo}</Link>
                       </td>
-                      <td className="td">{r.created}</td>
-                      <td className="td w-40">
+                      <td className="td tabular-nums" data-label="Creados">{r.created}</td>
+                      <td className="td w-40 max-sm:hidden">
                         <div className="h-2 rounded bg-amber-400" style={{ width: `${(r.created / maxCreated) * 100}%`, minWidth: r.created ? 4 : 0 }} />
                       </td>
-                      <td className="td">{r.merged}</td>
-                      <td className="td">{r.open}</td>
-                      <td className="td">{fmtHours(r.merged ? r.mergeHours / r.merged : null)}</td>
-                      <td className="td">{r.people.size}</td>
+                      <td className="td tabular-nums" data-label="Mergeados">{r.merged}</td>
+                      <td className="td tabular-nums" data-label="Abiertos ahora">{r.open}</td>
+                      <td className="td tabular-nums" data-label="Prom. a merge">{fmtHours(r.merged ? r.mergeHours / r.merged : null)}</td>
+                      <td className="td tabular-nums" data-label="Personas">{r.people.size}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -193,8 +188,8 @@ export default async function PrsPage({
         {list.length === 0 ? (
           <Empty>Sin PRs creados o mergeados en este periodo.</Empty>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
               <thead>
                 <tr className="border-b border-slate-100">
                   {["PR", "Autor", "Estado", "Creado", "Merge", "Cambios"].map((h) => (
@@ -202,23 +197,25 @@ export default async function PrsPage({
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
                 {list.map((p) => (
                   <tr key={p.id}>
-                    <td className="td">
-                      <a href={p.url} target="_blank" rel="noopener noreferrer" className="font-medium text-indigo-700 hover:underline">
-                        {p.repo}#{p.number}
-                      </a>
-                      <div className="max-w-md truncate text-xs text-slate-500">{p.title}</div>
+                    <td className="td" data-primary>
+                      <div className="min-w-0">
+                        <a href={p.url} target="_blank" rel="noopener noreferrer" className="break-all font-medium text-indigo-700 hover:underline">
+                          {p.repo}#{p.number}
+                        </a>
+                        <div className="max-w-md truncate text-xs font-normal text-slate-500 max-sm:max-w-none max-sm:whitespace-normal">{p.title}</div>
+                      </div>
                     </td>
-                    <td className="td">
+                    <td className="td" data-label="Autor">
                       {p.member ? <Link className="text-indigo-700 hover:underline" href={`/team/${p.member.id}`}>{p.member.name}</Link> : "—"}
                     </td>
-                    <td className="td">{prBadge(p.state, p.isDraft)}</td>
-                    <td className="td">{formatDate(p.createdAtGh)}</td>
-                    <td className="td">{formatDate(p.mergedAt)}</td>
-                    <td className="td text-xs">
-                      <span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.
+                    <td className="td" data-label="Estado">{prBadge(p.state, p.isDraft)}</td>
+                    <td className="td whitespace-nowrap" data-label="Creado">{formatDate(p.createdAtGh)}</td>
+                    <td className="td whitespace-nowrap" data-label="Merge">{formatDate(p.mergedAt)}</td>
+                    <td className="td text-xs" data-label="Cambios">
+                      <span><span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.</span>
                     </td>
                   </tr>
                 ))}
