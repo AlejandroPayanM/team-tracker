@@ -43,7 +43,7 @@ export default async function Dashboard({
   for (const p of openPrs) openByMember.set(p.memberId!, (openByMember.get(p.memberId!) ?? 0) + 1);
   const stale = openPrs.filter((p) => !p.firstReviewAt && Date.now() - p.createdAtGh.getTime() > STALE_DAYS * 86_400_000);
 
-  const lastOk = (src: string) => lastRuns.find((r) => r.source === src && r.status === "OK");
+  const lastOk = (src: string) => lastRuns.find((r) => r.source === src && (r.status === "OK" || r.status === "WARNING"));
 
   return (
     <>

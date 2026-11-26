@@ -1,22 +1,38 @@
 import { env } from "./env";
+import { cleanErrorBody, retryDelays, sleep } from "./http";
 
 const REST = "https://api.github.com";
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const TRANSIENT = new Set([502, 503, 504]); // errores pasajeros de GitHub o de su proxy
 
 async function ghFetch(url: string, init: RequestInit = {}, attempt = 0): Promise<Response> {
   const token = env.githubToken;
   if (!token) throw new Error("GITHUB_TOKEN no está configurado");
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "team-tracker",
-      ...(init.headers ?? {}),
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
+  const delays = retryDelays();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "team-tracker",
+        ...(init.headers ?? {}),
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    // Sin respuesta (corte de red, tiempo agotado): se reintenta con espera creciente.
+    if (attempt < delays.length) {
+      await sleep(delays[attempt]!);
+      return ghFetch(url, init, attempt + 1);
+    }
+    throw new Error(`No se pudo conectar con GitHub: ${e instanceof Error ? e.message : e}`);
+  }
+  if (TRANSIENT.has(res.status) && attempt < delays.length) {
+    await sleep(delays[attempt]!);
+    return ghFetch(url, init, attempt + 1);
+  }
   if ((res.status === 403 || res.status === 429) && attempt < 3) {
     const retryAfter = Number(res.headers.get("retry-after"));
     const reset = Number(res.headers.get("x-ratelimit-reset"));
@@ -62,7 +78,7 @@ export type GhPullRequest = {
 
 const SEARCH_QUERY = /* GraphQL */ `
   query ($q: String!, $cursor: String) {
-    search(query: $q, type: ISSUE, first: 50, after: $cursor) {
+    search(query: $q, type: ISSUE, first: 25, after: $cursor) {
       issueCount
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -96,13 +112,18 @@ export async function* searchPullRequests(
   q: string,
 ): AsyncGenerator<{ pr: GhPullRequest; total: number }> {
   let cursor: string | null = null;
-  for (let page = 0; page < 20; page++) {
+  // Páginas de 25 (menos carga por petición, menos 502); 40 páginas = tope de 1000 resultados de la búsqueda.
+  for (let page = 0; page < 40; page++) {
     const res = await ghFetch(`${REST}/graphql`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: SEARCH_QUERY, variables: { q, cursor } }),
     });
-    if (!res.ok) throw new Error(`GitHub GraphQL ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) {
+      const body = cleanErrorBody(await res.text());
+      const hint = res.status >= 500 ? " (error temporal de GitHub; se reintentará en la próxima sincronización)" : "";
+      throw new Error(`GitHub GraphQL ${res.status}${body ? `: ${body}` : ""}${hint}`);
+    }
     const json = (await res.json()) as SearchResponse;
     if (json.errors?.length) throw new Error(`GitHub: ${json.errors.map((e) => e.message).join("; ")}`);
     const s = json.data!.search;

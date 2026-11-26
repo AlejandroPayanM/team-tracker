@@ -3,11 +3,13 @@ import { env } from "@/lib/env";
 import { requireUser } from "@/lib/auth";
 import { Badge, Card } from "@/components/ui";
 import { IntegrationPanel } from "@/components/forms";
+import { formatDateTime } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // las acciones de sincronización corren en esta ruta
 
-const dt = new Intl.DateTimeFormat("es-MX", { dateStyle: "short", timeStyle: "short" });
+const STATUS_TONE = { OK: "green", WARNING: "amber", ERROR: "red" } as const;
+const STATUS_LABEL: Record<string, string> = { OK: "OK", WARNING: "CON AVISOS", ERROR: "ERROR", SKIPPED: "OMITIDA", RUNNING: "EN CURSO" };
 
 export default async function SettingsPage() {
   const user = await requireUser();
@@ -68,10 +70,10 @@ export default async function SettingsPage() {
                 <td className="td">{r.source}</td>
                 <td className="td">{r.trigger}</td>
                 <td className="td">
-                  <Badge tone={r.status === "OK" ? "green" : r.status === "ERROR" ? "red" : "blue"}>{r.status}</Badge>
+                  <Badge tone={STATUS_TONE[r.status as keyof typeof STATUS_TONE] ?? "blue"}>{STATUS_LABEL[r.status] ?? r.status}</Badge>
                 </td>
                 <td className="td">{r.items}</td>
-                <td className="td">{dt.format(r.startedAt)}</td>
+                <td className="td">{formatDateTime(r.startedAt)}</td>
                 <td className="td max-w-xs truncate text-xs text-slate-500" title={r.error ?? ""}>{r.error ?? ""}</td>
               </tr>
             ))}
@@ -92,7 +94,7 @@ export default async function SettingsPage() {
             <tbody className="divide-y divide-slate-100">
               {logs.map((l) => (
                 <tr key={l.id}>
-                  <td className="td whitespace-nowrap">{dt.format(l.createdAt)}</td>
+                  <td className="td whitespace-nowrap">{formatDateTime(l.createdAt)}</td>
                   <td className="td">{l.userEmail ?? "—"}</td>
                   <td className="td font-mono text-xs">{l.action}</td>
                   <td className="td max-w-xs truncate text-xs text-slate-500" title={l.detail ?? ""}>{l.detail ?? ""}</td>

@@ -254,7 +254,11 @@ export async function syncNowAction(_prev: FormState, fd: FormData): Promise<For
   await audit("sync.manual", { detail: `${full ? "full " : ""}${JSON.stringify(results)}`.slice(0, 400) });
   revalidatePath("/", "layout");
   const text = results
-    .map((r) => `${r.source}: ${r.status === "OK" ? `${r.items} elementos` : (r.message ?? r.status)}`)
+    .map((r) => {
+      if (r.status === "OK") return `${r.source}: ${r.items} elementos`;
+      if (r.status === "WARNING") return `${r.source}: ${r.items} elementos, con avisos (${r.message ?? ""})`;
+      return `${r.source}: ${r.message ?? r.status}`;
+    })
     .join(" · ");
   return results.some((r) => r.status === "ERROR") ? { error: text } : { ok: text };
 }

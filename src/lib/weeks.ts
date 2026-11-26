@@ -87,6 +87,13 @@ export function formatDate(d: Date | null | undefined): string {
   return fmtY.format(new Date(d.getTime() + offsetMs()));
 }
 
+const fmtDateTime = new Intl.DateTimeFormat("es-MX", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" });
+
+/** Fecha y hora en la zona configurada (WEEK_TZ_OFFSET_MINUTES), no en la del servidor (UTC en Vercel). */
+export function formatDateTime(d: Date): string {
+  return fmtDateTime.format(new Date(d.getTime() + offsetMs()));
+}
+
 export function relativeDays(d: Date): string {
   const days = Math.floor((Date.now() - d.getTime()) / (24 * 3600 * 1000));
   if (days <= 0) return "hoy";

@@ -1,4 +1,5 @@
 import { env } from "./env";
+import { cleanErrorBody } from "./http";
 
 // Endpoints usados (documentación oficial de Zoho Projects, rutas /restapi/):
 //   GET /restapi/portal/{portal}/users/?user_type=all
@@ -64,7 +65,10 @@ async function zget<T>(path: string, params: Record<string, string | number> = {
     await sleep(5000 * (attempt + 1));
     return zget<T>(path, params, attempt + 1);
   }
-  if (!res.ok) throw new Error(`Zoho ${res.status} en ${path}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const body = cleanErrorBody(await res.text());
+    throw new Error(`Zoho ${res.status} en ${path}${body ? `: ${body}` : ""}`);
+  }
   return (await res.json()) as T;
 }
 

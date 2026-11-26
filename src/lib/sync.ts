@@ -5,7 +5,15 @@ import { listZohoProjects, listZohoTasks, listZohoUsers, zohoTaskUrl } from "./z
 
 export type SyncSource = "GITHUB" | "ZOHO";
 export type SyncOpts = { full?: boolean; trigger: string };
-export type SyncOutcome = { source: SyncSource; status: "OK" | "ERROR" | "SKIPPED"; items: number; message?: string };
+// OK = todo bien · WARNING = terminó, pero con avisos que no afectan los datos (p. ej. alguien sin usuario de GitHub)
+// ERROR = alguna consulta falló y faltan datos por traer · SKIPPED = no se ejecutó.
+export type SyncOutcome = {
+  source: SyncSource;
+  status: "OK" | "WARNING" | "ERROR" | "SKIPPED";
+  items: number;
+  message?: string;
+};
+type RunResult = { items: number; warnings: string[]; errors: string[] };
 
 const STALE_RUN_MS = 10 * 60 * 1000; // las funciones duran máx. 5 min
 const DAY = 24 * 3600 * 1000;
@@ -14,7 +22,7 @@ async function sinceDate(source: SyncSource, full?: boolean): Promise<Date> {
   const lookback = new Date(Date.now() - env.syncLookbackDays * DAY);
   if (full) return lookback;
   const last = await db.syncRun.findFirst({
-    where: { source, status: "OK" },
+    where: { source, status: { in: ["OK", "WARNING"] } }, // WARNING también terminó y trajo todo
     orderBy: { startedAt: "desc" },
   });
   // 1 día de traslape para no perder cambios en el borde.
@@ -24,7 +32,7 @@ async function sinceDate(source: SyncSource, full?: boolean): Promise<Date> {
 async function runTracked(
   source: SyncSource,
   trigger: string,
-  fn: () => Promise<{ items: number; warnings: string[] }>,
+  fn: () => Promise<RunResult>,
 ): Promise<SyncOutcome> {
   await db.syncRun.updateMany({
     where: { source, status: "RUNNING", startedAt: { lt: new Date(Date.now() - STALE_RUN_MS) } },
@@ -41,9 +49,10 @@ async function runTracked(
 
   const run = await db.syncRun.create({ data: { source, trigger, status: "RUNNING" } });
   try {
-    const { items, warnings } = await fn();
-    const status = warnings.length ? "ERROR" : "OK";
-    const error = warnings.length ? warnings.join(" | ").slice(0, 1000) : null;
+    const { items, warnings, errors } = await fn();
+    const status = errors.length ? "ERROR" : warnings.length ? "WARNING" : "OK";
+    const all = [...new Set([...errors, ...warnings])]; // primero lo que falló, sin repetidos
+    const error = all.length ? all.join(" | ").slice(0, 1000) : null;
     await db.syncRun.update({ where: { id: run.id }, data: { status, items, error, finishedAt: new Date() } });
     return { source, status, items, message: error ?? undefined };
   } catch (e) {
@@ -63,7 +72,8 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
     return Promise.resolve({ source: "GITHUB", status: "SKIPPED", items: 0, message: "GITHUB_TOKEN no configurado" });
   }
   return runTracked("GITHUB", opts.trigger, async () => {
-    const warnings: string[] = [];
+    const warnings: string[] = []; // avisos: no afectan los datos traídos
+    const errors: string[] = []; // fallas: faltan datos y se reintentarán
     const startedAt = new Date(); // el cursor de cada persona avanza hasta aquí, no hasta que termine la corrida
     const lookback = new Date(startedAt.getTime() - env.syncLookbackDays * DAY);
     const org = env.githubOrg ? ` org:${env.githubOrg}` : "";
@@ -115,7 +125,7 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
           }
         } catch (e) {
           failed = true;
-          warnings.push(`${login}: ${e instanceof Error ? e.message : e}`);
+          errors.push(`${login}: ${e instanceof Error ? e.message : e}`);
         }
       }
       // Si algo falló, el cursor no avanza y la próxima corrida reintenta desde el mismo punto.
@@ -127,7 +137,7 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
       await db.pullRequest.updateMany({ where: { authorLogin: login, memberId: null }, data: { memberId } });
       await db.prReview.updateMany({ where: { reviewerLogin: login, memberId: null }, data: { memberId } });
     }
-    return { items, warnings };
+    return { items, warnings, errors };
   });
 }
 
@@ -187,6 +197,7 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
   }
   return runTracked("ZOHO", opts.trigger, async () => {
     const warnings: string[] = [];
+    const errors: string[] = [];
     const startedAt = new Date();
     const sinceMs = (await sinceDate("ZOHO", false)).getTime();
 
@@ -255,14 +266,14 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
         }
       } catch (e) {
         projectFailed = true;
-        warnings.push(`Proyecto ${p.name}: ${e instanceof Error ? e.message : e}`);
+        errors.push(`Proyecto ${p.name}: ${e instanceof Error ? e.message : e}`);
       }
     }
     // Solo si ningún proyecto falló se da por traído el historial.
     if (!projectFailed) {
       await db.member.updateMany({ where: { archivedAt: null }, data: { zohoSyncedAt: startedAt } });
     }
-    return { items, warnings };
+    return { items, warnings, errors };
   });
 }
 
