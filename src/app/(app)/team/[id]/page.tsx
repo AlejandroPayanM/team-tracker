@@ -1,25 +1,33 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { emptyStats, weeklySeries } from "@/lib/stats";
-import { formatDate, relativeDays, shortDate, startOfWeek } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, Stat, prBadge } from "@/components/ui";
+import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
+import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
+import { Badge, Bars, Card, Empty, RangeNav, Stat, prBadge } from "@/components/ui";
 import { DeleteMemberForm, MemberForm, NoteForm, SubmitButton } from "@/components/forms";
 import { archiveMemberAction, deleteNoteAction, restoreMemberAction, toggleNoteAction } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // las acciones de sincronización corren en esta ruta
-const WEEKS = 12;
+const MIN_CHART_WEEKS = 12;
 
-export default async function MemberPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function MemberPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+}) {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
   const { id } = await params;
+  const range = parseRange(await searchParams);
+  const chartN = Math.max(MIN_CHART_WEEKS, range.weeks);
   const m = await db.member.findUnique({ where: { id } });
   if (!m) notFound();
 
   const [series, prs, openTasks, doneTasks, notes, totalPrs, totalMerged, totalReviews] = await Promise.all([
-    weeklySeries(startOfWeek(new Date()), WEEKS, id),
+    weeklySeries(range.end, chartN, id),
     db.pullRequest.findMany({ where: { memberId: id }, orderBy: { createdAtGh: "desc" }, take: 50 }),
     db.zohoTask.findMany({ where: { members: { some: { id } }, completed: false }, orderBy: [{ dueDate: "asc" }], take: 50 }),
     db.zohoTask.findMany({ where: { members: { some: { id } }, completed: true }, orderBy: { completedAt: "desc" }, take: 20 }),
@@ -29,10 +37,10 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
     db.prReview.count({ where: { memberId: id } }),
   ]);
 
-  const weeks = series.byMember.get(id) ?? Array.from({ length: WEEKS }, emptyStats);
+  const weeks = series.byMember.get(id) ?? Array.from({ length: chartN }, emptyStats);
   const labels = series.weekStarts.map(shortDate);
-  const last4 = weeks.slice(-4);
-  const sum = (f: (s: (typeof weeks)[number]) => number) => last4.reduce((a, s) => a + f(s), 0);
+  const dim = chartN - range.weeks; // barras previas al periodo elegido
+  const inRange = sumStats(weeks.slice(-range.weeks));
   const pendingActions = notes.filter((n) => n.kind === "ACTION" && !n.done);
 
   return (
@@ -71,11 +79,13 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
           ))}
       </div>
 
+      <RangeNav base={`/team/${m.id}`} range={range} />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="PRs creados (4 sem.)" value={sum((s) => s.prsOpened)} />
-        <Stat label="PRs mergeados (4 sem.)" value={sum((s) => s.prsMerged)} />
-        <Stat label="Reviews (4 sem.)" value={sum((s) => s.reviews)} />
-        <Stat label="Tareas Zoho completadas (4 sem.)" value={sum((s) => s.tasksCompleted)} />
+        <Stat label="PRs creados" value={inRange.prsOpened} />
+        <Stat label="PRs mergeados" value={inRange.prsMerged} />
+        <Stat label="Reviews" value={inRange.reviews} />
+        <Stat label="Tareas Zoho completadas" value={inRange.tasksCompleted} />
       </div>
       <p className="-mt-3 text-xs text-slate-500">
         Histórico sincronizado: {totalPrs} PRs ({totalMerged} mergeados) · {totalReviews} reviews.
@@ -83,13 +93,13 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card title="PRs mergeados por semana">
-          <Bars values={weeks.map((s) => s.prsMerged)} labels={labels} />
+          <Bars values={weeks.map((s) => s.prsMerged)} labels={labels} dim={dim} />
         </Card>
         <Card title="Reviews por semana">
-          <Bars values={weeks.map((s) => s.reviews)} labels={labels} color="bg-sky-500" />
+          <Bars values={weeks.map((s) => s.reviews)} labels={labels} color="bg-sky-500" dim={dim} />
         </Card>
         <Card title="Tareas Zoho completadas por semana">
-          <Bars values={weeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" />
+          <Bars values={weeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
         </Card>
       </div>
 

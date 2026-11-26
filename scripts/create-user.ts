@@ -41,9 +41,28 @@ async function main() {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Correo inválido");
   if (role !== "ADMIN" && role !== "VIEWER") throw new Error("Rol debe ser ADMIN o VIEWER");
 
-  const pw = await askHidden("Contraseña (mín. 12 caracteres): ");
-  const pw2 = await askHidden("Repite la contraseña: ");
-  if (pw !== pw2) throw new Error("Las contraseñas no coinciden");
+  // Modo no interactivo: NEW_USER_PASSWORD en el entorno (para cuentas nuevas con contraseña temporal).
+  // En ese modo NO se sobrescribe una cuenta existente, salvo que pases --reset.
+  const envPw = process.env.NEW_USER_PASSWORD;
+  const existing = await db.user.findUnique({ where: { email }, select: { id: true } });
+  if (envPw && existing && !process.argv.includes("--reset")) {
+    throw new Error(`Ya existe ${email}. Usa --reset si de verdad quieres cambiar su contraseña.`);
+  }
+
+  const host = (() => {
+    try {
+      return new URL(process.env.DATABASE_URL ?? "").host;
+    } catch {
+      return "?";
+    }
+  })();
+  console.log(`Base de datos: ${host}`);
+
+  const pw = envPw ?? (await askHidden("Contraseña (mín. 12 caracteres): "));
+  if (!envPw) {
+    const pw2 = await askHidden("Repite la contraseña: ");
+    if (pw !== pw2) throw new Error("Las contraseñas no coinciden");
+  }
   if (pw.length < 12) throw new Error("La contraseña debe tener al menos 12 caracteres");
 
   const passwordHash = await bcrypt.hash(pw, 12);
@@ -53,7 +72,7 @@ async function main() {
     update: { name: nameArg, role, passwordHash, failedLogins: 0, lockedUntil: null },
   });
   await db.session.deleteMany({ where: { user: { email } } }); // invalida sesiones previas
-  console.log(`Usuario ${email} (${role}) listo.`);
+  console.log(`Usuario ${email} (${role}) ${existing ? "actualizado" : "creado"}.`);
 }
 
 main()

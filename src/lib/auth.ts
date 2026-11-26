@@ -113,6 +113,14 @@ export async function destroySession(): Promise<void> {
   jar.delete(SESSION_COOKIE);
 }
 
+/** Cierra todas las sesiones del usuario excepto la actual (se usa al cambiar la contraseña). */
+export async function revokeOtherSessions(userId: string): Promise<void> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  await db.session.deleteMany({
+    where: { userId, ...(token ? { tokenHash: { not: sha256(token) } } : {}) },
+  });
+}
+
 export type CurrentUser = { id: string; email: string; name: string; role: Role };
 
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {

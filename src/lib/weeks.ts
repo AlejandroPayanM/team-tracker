@@ -39,10 +39,42 @@ const fmtY = new Intl.DateTimeFormat("es-MX", {
   timeZone: "UTC",
 });
 
-export function formatWeekRange(start: Date): string {
+/** Texto del rango entre el inicio de la semana `start` y el fin de la semana que inicia en `end`. */
+export function formatRange(start: Date, end: Date = start): string {
   const a = new Date(start.getTime() + offsetMs());
-  const b = new Date(a.getTime() + 6 * 24 * 3600 * 1000);
-  return `${fmt.format(a)} – ${fmtY.format(b)}`;
+  const b = new Date(end.getTime() + offsetMs() + 6 * 24 * 3600 * 1000);
+  const crossesYear = a.getUTCFullYear() !== b.getUTCFullYear();
+  return `${(crossesYear ? fmtY : fmt).format(a)} – ${fmtY.format(b)}`;
+}
+
+export function formatWeekRange(start: Date): string {
+  return formatRange(start);
+}
+
+export const MAX_RANGE_WEEKS = 52;
+
+/** Rango de semanas completas, de la semana que inicia en `start` a la que inicia en `end` (ambas incluidas). */
+export type WeekRange = { start: Date; end: Date; weeks: number };
+
+/**
+ * Lee ?from=YYYY-MM-DD&to=YYYY-MM-DD (cualquier día; se ajusta a su semana) o ?week= (una semana).
+ * Sin parámetros: semana actual. Nunca pasa de la semana actual ni de 52 semanas.
+ */
+export function parseRange(sp: { from?: string; to?: string; week?: string }): WeekRange {
+  const cur = startOfWeek(new Date());
+  const f = sp.from ?? sp.week;
+  const t = sp.to ?? sp.week;
+  let start = f ? parseWeekParam(f) : cur;
+  let end = t ? parseWeekParam(t) : cur;
+  if (end > cur) end = cur;
+  if (start > cur) start = cur;
+  if (start > end) [start, end] = [end, start];
+  let weeks = Math.round((end.getTime() - start.getTime()) / WEEK_MS) + 1;
+  if (weeks > MAX_RANGE_WEEKS) {
+    weeks = MAX_RANGE_WEEKS;
+    start = addWeeks(end, -(MAX_RANGE_WEEKS - 1));
+  }
+  return { start, end, weeks };
 }
 
 /** "24 nov" para etiquetas de gráficas. */

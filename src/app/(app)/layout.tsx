@@ -24,9 +24,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
-            <span>
+            <Link href="/account" className="hover:text-slate-900" title="Mi cuenta">
               {user.name} · {user.role === "ADMIN" ? "Admin" : "Solo lectura"}
-            </span>
+            </Link>
             <form action={logoutAction}>
               <button className="btn-ghost" type="submit">
                 Salir

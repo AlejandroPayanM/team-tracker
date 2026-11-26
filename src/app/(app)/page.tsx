@@ -1,21 +1,28 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { avgMergeHours, emptyStats, isIdle, weeklySeries } from "@/lib/stats";
-import { parseWeekParam, relativeDays, shortDate } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, Stat, WeekNav } from "@/components/ui";
+import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
+import { parseRange, relativeDays, shortDate } from "@/lib/weeks";
+import { Badge, Bars, Card, Empty, RangeNav, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
 const STALE_DAYS = 3;
+const MIN_CHART_WEEKS = 8;
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+}) {
   await requireUser();
-  const week = parseWeekParam((await searchParams).week);
-  const WEEKS = 8;
+  const range = parseRange(await searchParams);
+  const { weeks } = range;
+  const chartN = Math.max(MIN_CHART_WEEKS, weeks); // la gráfica da contexto si el rango es corto
+  const total = Math.max(chartN, weeks * 2); // + el periodo previo, para comparar
 
   const [series, members, openPrs, lastRuns] = await Promise.all([
-    weeklySeries(week, WEEKS),
+    weeklySeries(range.end, total),
     db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
     db.pullRequest.findMany({
       where: { state: "OPEN", isDraft: false, memberId: { not: null }, member: { archivedAt: null } },
@@ -25,9 +32,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
   ]);
 
-  const cur = series.team[WEEKS - 1]!;
-  const prev = series.team[WEEKS - 2]!;
-  const labels = series.weekStarts.map(shortDate);
+  const cur = sumStats(series.team.slice(-weeks));
+  const prev = sumStats(series.team.slice(-2 * weeks, -weeks));
+  const chartWeeks = series.team.slice(-chartN);
+  const labels = series.weekStarts.slice(-chartN).map(shortDate);
+  const dim = chartN - weeks; // barras previas al periodo elegido
   const openByMember = new Map<string, number>();
   for (const p of openPrs) openByMember.set(p.memberId!, (openByMember.get(p.memberId!) ?? 0) + 1);
   const stale = openPrs.filter((p) => !p.firstReviewAt && Date.now() - p.createdAtGh.getTime() > STALE_DAYS * 86_400_000);
@@ -38,7 +47,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Resumen del equipo</h1>
-        <WeekNav base="/" week={week} />
+        <RangeNav base="/" range={range} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -50,10 +59,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="PRs mergeados por semana">
-          <Bars values={series.team.map((s) => s.prsMerged)} labels={labels} />
+          <Bars values={chartWeeks.map((s) => s.prsMerged)} labels={labels} dim={dim} />
         </Card>
         <Card title="Tareas Zoho completadas por semana">
-          <Bars values={series.team.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" />
+          <Bars values={chartWeeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
         </Card>
       </div>
 
@@ -78,7 +87,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {members.map((m) => {
-                  const s = series.byMember.get(m.id)?.[WEEKS - 1] ?? emptyStats();
+                  const s = sumStats(series.byMember.get(m.id)?.slice(-weeks) ?? []);
                   const avg = avgMergeHours(s);
                   return (
                     <tr key={m.id} className="hover:bg-slate-50">

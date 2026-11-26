@@ -12,7 +12,10 @@ import {
   createSession,
   destroySession,
   getCurrentUser,
+  hashPassword,
   requireAdmin,
+  requireUser,
+  revokeOtherSessions,
   verifyLogin,
 } from "@/lib/auth";
 import { firstError, loginSchema, memberSchema, noteSchema } from "@/lib/validation";
@@ -48,6 +51,26 @@ export async function logoutAction(): Promise<void> {
   await destroySession();
   if (user) await audit("auth.logout", { userId: user.id, userEmail: user.email });
   redirect("/login");
+}
+
+export async function changePasswordAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  const user = await requireUser();
+  const current = str(fd, "current");
+  const next = str(fd, "next");
+  if (next.length < 12) return { error: "La nueva contraseña debe tener al menos 12 caracteres." };
+  if (next.length > 200) return { error: "La nueva contraseña es demasiado larga." };
+  if (next !== str(fd, "confirm")) return { error: "Las contraseñas nuevas no coinciden." };
+  if (next === current) return { error: "La nueva contraseña debe ser distinta a la actual." };
+
+  // verifyLogin aplica el límite de intentos y registra los fallos, igual que el login.
+  const check = await verifyLogin(user.email, current, await clientIp());
+  if (!check.ok) {
+    return { error: check.error.startsWith("Correo o contraseña") ? "La contraseña actual es incorrecta." : check.error };
+  }
+  await db.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(next) } });
+  await revokeOtherSessions(user.id);
+  await audit("auth.password_change", { userId: user.id, userEmail: user.email });
+  return { ok: "Contraseña actualizada." };
 }
 
 // ───────── Compañeros ─────────

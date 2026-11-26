@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   addNoteAction,
+  changePasswordAction,
   createMemberAction,
   deleteMemberAction,
   loginAction,
@@ -59,6 +60,30 @@ export function LoginForm() {
       </label>
       <Msg state={state} />
       <SubmitButton className="btn w-full">Entrar</SubmitButton>
+    </form>
+  );
+}
+
+export function PasswordForm() {
+  const [state, action] = useActionState(changePasswordAction, initial);
+  return (
+    <form action={action} className="max-w-sm space-y-3">
+      <label className="block text-sm font-medium">
+        Contraseña actual
+        <input name="current" type="password" autoComplete="current-password" required className="input mt-1" />
+      </label>
+      <label className="block text-sm font-medium">
+        Nueva contraseña
+        <input name="next" type="password" autoComplete="new-password" required minLength={12} maxLength={200} className="input mt-1" />
+      </label>
+      <label className="block text-sm font-medium">
+        Repite la nueva contraseña
+        <input name="confirm" type="password" autoComplete="new-password" required minLength={12} maxLength={200} className="input mt-1" />
+      </label>
+      <div className="flex items-center gap-3">
+        <SubmitButton>Cambiar contraseña</SubmitButton>
+        <Msg state={state} />
+      </div>
     </form>
   );
 }

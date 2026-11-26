@@ -1,15 +1,20 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { addWeeks, formatDate, parseWeekParam } from "@/lib/weeks";
-import { Badge, Card, Empty, WeekNav, prBadge } from "@/components/ui";
+import { addWeeks, formatDate, parseRange } from "@/lib/weeks";
+import { Badge, Card, Empty, RangeNav, prBadge } from "@/components/ui";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-export default async function WeeklyPage({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
+export default async function WeeklyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+}) {
   await requireUser();
-  const week = parseWeekParam((await searchParams).week);
-  const range = { gte: week, lt: addWeeks(week, 1) };
+  const weekRange = parseRange(await searchParams);
+  const multi = weekRange.weeks > 1;
+  const range = { gte: weekRange.start, lt: addWeeks(weekRange.end, 1) };
 
   const members = await db.member.findMany({
     where: { archivedAt: null },
@@ -28,7 +33,7 @@ export default async function WeeklyPage({ searchParams }: { searchParams: Promi
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Detalle semanal</h1>
-        <WeekNav base="/weekly" week={week} />
+        <RangeNav base="/weekly" range={weekRange} />
       </div>
 
       {members.length === 0 && (
@@ -50,7 +55,7 @@ export default async function WeeklyPage({ searchParams }: { searchParams: Promi
             }
           >
             {empty ? (
-              <p className="text-sm text-amber-700">Sin actividad registrada esta semana.</p>
+              <p className="text-sm text-amber-700">Sin actividad registrada en {multi ? "este periodo" : "esta semana"}.</p>
             ) : (
               <div className="grid gap-4 md:grid-cols-3 text-sm">
                 <div>
@@ -65,7 +70,10 @@ export default async function WeeklyPage({ searchParams }: { searchParams: Promi
                             {p.repo}#{p.number}
                           </a>{" "}
                           {prBadge(p.state, p.isDraft)}
-                          <div className="truncate text-xs text-slate-500">{p.title}</div>
+                          <div className="truncate text-xs text-slate-500">
+                            {multi && `${formatDate(p.createdAtGh)} · `}
+                            {p.title}
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -83,7 +91,10 @@ export default async function WeeklyPage({ searchParams }: { searchParams: Promi
                             {r.pullRequest.repo}#{r.pullRequest.number}
                           </a>{" "}
                           <Badge tone={r.state === "APPROVED" ? "green" : r.state === "CHANGES_REQUESTED" ? "red" : "gray"}>{r.state.toLowerCase().replace("_", " ")}</Badge>
-                          <div className="truncate text-xs text-slate-500">{r.pullRequest.title}</div>
+                          <div className="truncate text-xs text-slate-500">
+                            {multi && `${formatDate(r.submittedAt)} · `}
+                            {r.pullRequest.title}
+                          </div>
                         </li>
                       ))}
                     </ul>

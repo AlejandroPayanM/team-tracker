@@ -23,7 +23,22 @@ export const emptyStats = (): WeekStats => ({
   mergeHoursTotal: 0,
 });
 
-export const avgMergeHours = (s: WeekStats) => (s.prsMerged ? s.mergeHoursTotal / s.prsMerged : null);
+export function sumStats(list: WeekStats[]): WeekStats {
+  const t = emptyStats();
+  for (const s of list) {
+    t.prsOpened += s.prsOpened;
+    t.prsMerged += s.prsMerged;
+    t.reviews += s.reviews;
+    t.additions += s.additions;
+    t.deletions += s.deletions;
+    t.tasksCompleted += s.tasksCompleted;
+    t.tasksTouched += s.tasksTouched;
+    t.mergeHoursTotal += s.mergeHoursTotal;
+  }
+  return t;
+}
+
+export const avgMergeHours =(s: WeekStats) => (s.prsMerged ? s.mergeHoursTotal / s.prsMerged : null);
 
 export const isIdle = (s: WeekStats) =>
   !s.prsOpened && !s.prsMerged && !s.reviews && !s.tasksCompleted && !s.tasksTouched;
