@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { env } from "@/lib/env";
+import { getConfig } from "@/lib/config";
 import { requireUser } from "@/lib/auth";
 import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
+import { listRepos, parseRepo } from "@/lib/filters";
 import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
 import { Badge, Bars, Card, Empty, RangeNav, Stat, prBadge } from "@/components/ui";
 import { DeleteMemberForm, MemberForm, NoteForm, SubmitButton } from "@/components/forms";
@@ -18,25 +19,33 @@ export default async function MemberPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
   const { id } = await params;
-  const range = parseRange(await searchParams);
+  const sp = await searchParams;
+  const range = parseRange(sp);
+  const repo = parseRepo(sp.repo);
   const chartN = Math.max(MIN_CHART_WEEKS, range.weeks);
   const m = await db.member.findUnique({ where: { id } });
   if (!m) notFound();
+  const cfg = await getConfig();
 
-  const [series, prs, openTasks, doneTasks, notes, totalPrs, totalMerged, totalReviews] = await Promise.all([
-    weeklySeries(range.end, chartN, id),
-    db.pullRequest.findMany({ where: { memberId: id }, orderBy: { createdAtGh: "desc" }, take: 50 }),
+  const [series, prs, openTasks, doneTasks, notes, totalPrs, totalMerged, totalReviews, repos] = await Promise.all([
+    weeklySeries(range.end, chartN, id, repo),
+    db.pullRequest.findMany({
+      where: { memberId: id, ...(repo ? { repo } : {}) },
+      orderBy: { createdAtGh: "desc" },
+      take: 50,
+    }),
     db.zohoTask.findMany({ where: { members: { some: { id } }, completed: false }, orderBy: [{ dueDate: "asc" }], take: 50 }),
     db.zohoTask.findMany({ where: { members: { some: { id } }, completed: true }, orderBy: { completedAt: "desc" }, take: 20 }),
     db.memberNote.findMany({ where: { memberId: id }, orderBy: { createdAt: "desc" }, include: { author: { select: { name: true } } } }),
     db.pullRequest.count({ where: { memberId: id } }),
     db.pullRequest.count({ where: { memberId: id, state: "MERGED" } }),
     db.prReview.count({ where: { memberId: id } }),
+    listRepos(),
   ]);
 
   const weeks = series.byMember.get(id) ?? Array.from({ length: chartN }, emptyStats);
@@ -65,7 +74,7 @@ export default async function MemberPage({
             · Zoho: {m.zohoUserId ? "vinculado" : "sin vincular"} · desde {formatDate(m.startedAt)}
           </p>
           {!m.archivedAt &&
-            ((env.githubConfigured && m.githubLogin && !m.githubSyncedAt) || (env.zohoConfigured && !m.zohoSyncedAt)) && (
+            ((cfg.githubConfigured && m.githubLogin && !m.githubSyncedAt) || (cfg.zohoConfigured && !m.zohoSyncedAt)) && (
               <p className="mt-1 text-sm text-sky-700">
                 Su historial aún no se ha traído por completo. Se hará en la próxima sincronización, o ahora desde{" "}
                 <Link href="/settings" className="underline">Integraciones</Link>.
@@ -88,28 +97,42 @@ export default async function MemberPage({
           ))}
       </div>
 
-      <RangeNav base={`/team/${m.id}`} range={range} />
+      <RangeNav base={`/team/${m.id}`} range={range} repos={repos} repo={repo} />
+      {repo && (
+        <p className="text-sm text-indigo-800">
+          Viendo solo el repositorio <strong>{repo}</strong> (las tareas de Zoho no se filtran por repositorio y no se muestran en las tarjetas ni gráficas).
+        </p>
+      )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="PRs creados" value={inRange.prsOpened} />
         <Stat label="PRs mergeados" value={inRange.prsMerged} />
+        <Stat label="PRs abiertos al cierre" value={inRange.openAtEnd} />
         <Stat label="Reviews" value={inRange.reviews} />
-        <Stat label="Tareas Zoho completadas" value={inRange.tasksCompleted} />
+        {!repo && <Stat label="Tareas Zoho completadas" value={inRange.tasksCompleted} />}
       </div>
       <p className="-mt-3 text-xs text-slate-500">
         Histórico sincronizado: {totalPrs} PRs ({totalMerged} mergeados) · {totalReviews} reviews.
       </p>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Card title="PRs creados por semana">
+          <Bars values={weeks.map((s) => s.prsOpened)} labels={labels} color="bg-amber-500" dim={dim} />
+        </Card>
         <Card title="PRs mergeados por semana">
           <Bars values={weeks.map((s) => s.prsMerged)} labels={labels} dim={dim} />
         </Card>
+        <Card title="PRs abiertos al cierre de cada semana">
+          <Bars values={weeks.map((s) => s.openAtEnd)} labels={labels} color="bg-sky-500" dim={dim} />
+        </Card>
         <Card title="Reviews por semana">
-          <Bars values={weeks.map((s) => s.reviews)} labels={labels} color="bg-sky-500" dim={dim} />
+          <Bars values={weeks.map((s) => s.reviews)} labels={labels} color="bg-rose-400" dim={dim} />
         </Card>
-        <Card title="Tareas Zoho completadas por semana">
-          <Bars values={weeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
-        </Card>
+        {!repo && (
+          <Card title="Tareas Zoho completadas por semana">
+            <Bars values={weeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
+          </Card>
+        )}
       </div>
 
       <Card title={`Seguimiento${pendingActions.length ? ` · ${pendingActions.length} pendiente(s)` : ""}`}>

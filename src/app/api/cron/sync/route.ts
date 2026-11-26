@@ -18,7 +18,8 @@ function authorized(req: Request): boolean {
 
 async function handle(req: Request) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const results = await syncAll({ trigger: "cron" });
+  // El cron diario usa el traslape generoso (1 día) como red de seguridad de la sincronización automática.
+  const results = await syncAll({ trigger: "cron", deep: true });
   await audit("sync.cron", { userId: null, userEmail: "cron", detail: JSON.stringify(results).slice(0, 400) });
   return NextResponse.json({ results });
 }

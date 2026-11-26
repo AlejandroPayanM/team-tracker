@@ -31,6 +31,15 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
+  // Permite compilar/probar en otra carpeta (NEXT_DIST_DIR=.next-test) sin pisar el servidor de desarrollo en uso.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Se cargan como paquetes de Node (no empaquetados): pdfkit lee sus fuentes de disco y exceljs es muy grande.
+  serverExternalPackages: ["exceljs", "pdfkit"],
+  // pdfkit carga sus fuentes estándar con require dinámico (createRequire), que el rastreo de archivos no detecta:
+  // sin esto el PDF funciona en local pero falla en Vercel por no encontrar Helvetica.
+  outputFileTracingIncludes: {
+    "/api/reports/export": ["./node_modules/pdfkit/js/standard-fonts/**/*", "./node_modules/pdfkit/js/data/**/*"],
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

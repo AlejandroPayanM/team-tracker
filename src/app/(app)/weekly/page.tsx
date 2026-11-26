@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { addWeeks, formatDate, parseRange } from "@/lib/weeks";
+import { listRepos, parseRepo } from "@/lib/filters";
 import { Badge, Card, Empty, RangeNav, prBadge } from "@/components/ui";
 import Link from "next/link";
 
@@ -9,32 +10,49 @@ export const dynamic = "force-dynamic";
 export default async function WeeklyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
   await requireUser();
-  const weekRange = parseRange(await searchParams);
+  const sp = await searchParams;
+  const weekRange = parseRange(sp);
+  const repo = parseRepo(sp.repo);
   const multi = weekRange.weeks > 1;
   const range = { gte: weekRange.start, lt: addWeeks(weekRange.end, 1) };
 
-  const members = await db.member.findMany({
-    where: { archivedAt: null },
-    orderBy: { name: "asc" },
-    include: {
-      pullRequests: {
-        where: { OR: [{ createdAtGh: range }, { mergedAt: range }] },
-        orderBy: { createdAtGh: "asc" },
+  const [members, repos] = await Promise.all([
+    db.member.findMany({
+      where: { archivedAt: null },
+      orderBy: { name: "asc" },
+      include: {
+        pullRequests: {
+          where: { ...(repo ? { repo } : {}), OR: [{ createdAtGh: range }, { mergedAt: range }] },
+          orderBy: { createdAtGh: "asc" },
+        },
+        reviews: {
+          where: { submittedAt: range, ...(repo ? { pullRequest: { repo } } : {}) },
+          include: { pullRequest: { select: { repo: true, number: true, url: true, title: true } } },
+        },
+        // Las tareas de Zoho no pertenecen a un repositorio: con filtro de repositorio no se listan.
+        zohoTasks: {
+          where: repo ? { id: "__ninguna__" } : { OR: [{ completedAt: range }, { updatedAtZ: range }] },
+          orderBy: { updatedAtZ: "desc" },
+        },
       },
-      reviews: { where: { submittedAt: range }, include: { pullRequest: { select: { repo: true, number: true, url: true, title: true } } } },
-      zohoTasks: { where: { OR: [{ completedAt: range }, { updatedAtZ: range }] }, orderBy: { updatedAtZ: "desc" } },
-    },
-  });
+    }),
+    listRepos(),
+  ]);
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Detalle semanal</h1>
-        <RangeNav base="/weekly" range={weekRange} />
+        <RangeNav base="/weekly" range={weekRange} repos={repos} repo={repo} />
       </div>
+      {repo && (
+        <p className="text-sm text-indigo-800">
+          Viendo solo el repositorio <strong>{repo}</strong>. Las tareas de Zoho no se filtran por repositorio y no se listan.
+        </p>
+      )}
 
       {members.length === 0 && (
         <Card>

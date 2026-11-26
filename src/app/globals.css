@@ -12,6 +12,10 @@ body {
 .input {
   @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200;
 }
+/* Campo bloqueado: gris, sin sombra y con cursor de "no permitido", para que no parezca editable. */
+.input:disabled {
+  @apply cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 shadow-none placeholder:text-slate-400;
+}
 .btn {
   @apply inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60;
 }

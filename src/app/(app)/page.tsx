@@ -2,8 +2,9 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
+import { listRepos, parseRepo } from "@/lib/filters";
 import { countPendingBackfill } from "@/lib/sync";
-import { parseRange, relativeDays, shortDate } from "@/lib/weeks";
+import { parseRange, relativeDays, shortDate, weekParam } from "@/lib/weeks";
 import { Badge, Bars, Card, Empty, RangeNav, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -14,24 +15,27 @@ const MIN_CHART_WEEKS = 8;
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; week?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
   await requireUser();
-  const range = parseRange(await searchParams);
+  const sp = await searchParams;
+  const range = parseRange(sp);
+  const repo = parseRepo(sp.repo);
   const { weeks } = range;
   const chartN = Math.max(MIN_CHART_WEEKS, weeks); // la gráfica da contexto si el rango es corto
   const total = Math.max(chartN, weeks * 2); // + el periodo previo, para comparar
 
   const pendingBackfill = await countPendingBackfill();
-  const [series, members, openPrs, lastRuns] = await Promise.all([
-    weeklySeries(range.end, total),
+  const [series, members, openPrs, lastRuns, repos] = await Promise.all([
+    weeklySeries(range.end, total, undefined, repo),
     db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
     db.pullRequest.findMany({
-      where: { state: "OPEN", isDraft: false, memberId: { not: null }, member: { archivedAt: null } },
+      where: { state: "OPEN", isDraft: false, memberId: { not: null }, member: { archivedAt: null }, ...(repo ? { repo } : {}) },
       include: { member: { select: { id: true, name: true } } },
       orderBy: { createdAtGh: "asc" },
     }),
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
+    listRepos(),
   ]);
 
   const cur = sumStats(series.team.slice(-weeks));
@@ -49,8 +53,17 @@ export default async function Dashboard({
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Resumen del equipo</h1>
-        <RangeNav base="/" range={range} />
+        <RangeNav base="/" range={range} repos={repos} repo={repo} />
       </div>
+
+      {repo && (
+        <div className="rounded-md border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm text-indigo-900">
+          Viendo solo el repositorio <strong>{repo}</strong>. Las tareas de Zoho no pertenecen a un repositorio, por eso no se muestran.{" "}
+          <Link href={`/?from=${weekParam(range.start)}&to=${weekParam(range.end)}`} className="font-medium underline">
+            Ver todos
+          </Link>
+        </div>
+      )}
 
       {pendingBackfill > 0 && (
         <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
@@ -60,21 +73,35 @@ export default async function Dashboard({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="PRs abiertos (creados)" value={cur.prsOpened} prev={prev.prsOpened} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <Stat label="PRs creados" value={cur.prsOpened} prev={prev.prsOpened} />
         <Stat label="PRs mergeados" value={cur.prsMerged} prev={prev.prsMerged} />
+        <Stat label="PRs abiertos al cierre" value={cur.openAtEnd} prev={prev.openAtEnd} />
         <Stat label="Reviews realizados" value={cur.reviews} prev={prev.reviews} />
-        <Stat label="Tareas Zoho completadas" value={cur.tasksCompleted} prev={prev.tasksCompleted} />
+        {!repo && <Stat label="Tareas Zoho completadas" value={cur.tasksCompleted} prev={prev.tasksCompleted} />}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        <Card title="PRs creados por semana">
+          <Bars values={chartWeeks.map((s) => s.prsOpened)} labels={labels} color="bg-amber-500" dim={dim} />
+        </Card>
         <Card title="PRs mergeados por semana">
           <Bars values={chartWeeks.map((s) => s.prsMerged)} labels={labels} dim={dim} />
         </Card>
-        <Card title="Tareas Zoho completadas por semana">
-          <Bars values={chartWeeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
+        <Card title="PRs abiertos al cierre de cada semana">
+          <Bars values={chartWeeks.map((s) => s.openAtEnd)} labels={labels} color="bg-sky-500" dim={dim} />
         </Card>
+        {!repo && (
+          <Card title="Tareas Zoho completadas por semana">
+            <Bars values={chartWeeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
+          </Card>
+        )}
       </div>
+
+      <p className="-mt-3 text-xs text-slate-500">
+        Para ver los PRs en conjunto, por repositorio y con su detalle, entra a <Link href="/prs" className="text-indigo-600 hover:underline">Pull requests</Link>.
+        «Abiertos al cierre» cuenta los PRs sincronizados que seguían abiertos al terminar cada semana.
+      </p>
 
       <Card title="Por compañero">
         {members.length === 0 ? (
@@ -86,7 +113,7 @@ export default async function Dashboard({
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-100">
-                  {["Compañero", "PRs creados", "Mergeados", "Reviews", "Líneas +/−", "Prom. a merge", "Tareas Zoho", "PRs abiertos hoy", ""].map(
+                  {["Compañero", "PRs creados", "Mergeados", "Reviews", "Líneas +/− (PRs creados)", "Prom. a merge", "Tareas Zoho", "PRs abiertos hoy", ""].map(
                     (h) => (
                       <th key={h} className="th">
                         {h}

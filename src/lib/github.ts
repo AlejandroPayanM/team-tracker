@@ -1,12 +1,13 @@
-import { env } from "./env";
+import { getConfig } from "./config";
 import { cleanErrorBody, retryDelays, sleep } from "./http";
 
 const REST = "https://api.github.com";
 const TRANSIENT = new Set([502, 503, 504]); // errores pasajeros de GitHub o de su proxy
 
-async function ghFetch(url: string, init: RequestInit = {}, attempt = 0): Promise<Response> {
-  const token = env.githubToken;
-  if (!token) throw new Error("GITHUB_TOKEN no está configurado");
+/** `tokenOverride` permite probar un token nuevo antes de guardarlo. */
+async function ghFetch(url: string, init: RequestInit = {}, attempt = 0, tokenOverride?: string): Promise<Response> {
+  const token = tokenOverride ?? (await getConfig()).github.token;
+  if (!token) throw new Error("El token de GitHub no está configurado");
   const delays = retryDelays();
   let res: Response;
   try {
@@ -25,13 +26,13 @@ async function ghFetch(url: string, init: RequestInit = {}, attempt = 0): Promis
     // Sin respuesta (corte de red, tiempo agotado): se reintenta con espera creciente.
     if (attempt < delays.length) {
       await sleep(delays[attempt]!);
-      return ghFetch(url, init, attempt + 1);
+      return ghFetch(url, init, attempt + 1, tokenOverride);
     }
     throw new Error(`No se pudo conectar con GitHub: ${e instanceof Error ? e.message : e}`);
   }
   if (TRANSIENT.has(res.status) && attempt < delays.length) {
     await sleep(delays[attempt]!);
-    return ghFetch(url, init, attempt + 1);
+    return ghFetch(url, init, attempt + 1, tokenOverride);
   }
   if ((res.status === 403 || res.status === 429) && attempt < 3) {
     const retryAfter = Number(res.headers.get("retry-after"));
@@ -44,7 +45,7 @@ async function ghFetch(url: string, init: RequestInit = {}, attempt = 0): Promis
         : 20_000 * (attempt + 1);
     if (wait > 120_000) throw new Error("Límite de peticiones de GitHub alcanzado; reintenta más tarde.");
     await sleep(Math.max(wait, 1000));
-    return ghFetch(url, init, attempt + 1);
+    return ghFetch(url, init, attempt + 1, tokenOverride);
   }
   return res;
 }
@@ -146,7 +147,8 @@ export async function resolveGithubLogin(email: string): Promise<string | null> 
     const j = (await users.json()) as { total_count: number; items: Array<{ login: string }> };
     if (j.total_count === 1 && j.items[0]) return j.items[0].login.toLowerCase();
   }
-  const org = env.githubOrg ? ` org:${env.githubOrg}` : "";
+  const orgName = (await getConfig()).github.org;
+  const org = orgName ? ` org:${orgName}` : "";
   const commits = await ghFetch(`${REST}/search/commits?q=${encodeURIComponent(`author-email:${email}${org}`)}&per_page=1`);
   if (commits.ok) {
     const j = (await commits.json()) as { items: Array<{ author: { login: string } | null }> };
@@ -156,9 +158,9 @@ export async function resolveGithubLogin(email: string): Promise<string | null> 
   return null;
 }
 
-export async function checkGithub(): Promise<{ ok: true; login: string } | { ok: false; error: string }> {
+export async function checkGithub(tokenOverride?: string): Promise<{ ok: true; login: string } | { ok: false; error: string }> {
   try {
-    const res = await ghFetch(`${REST}/user`);
+    const res = await ghFetch(`${REST}/user`, {}, 0, tokenOverride);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}: token inválido o sin permisos` };
     const j = (await res.json()) as { login: string };
     return { ok: true, login: j.login };

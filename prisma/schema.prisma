@@ -166,6 +166,16 @@ model SyncRun {
   @@index([source, startedAt])
 }
 
+// Credenciales y ajustes de integraciones guardados desde la app. Los secretos van cifrados (AES-256-GCM,
+// llave en APP_ENCRYPTION_KEY, que no se guarda en la base). Ver src/lib/secrets.ts.
+model AppSetting {
+  key       String   @id
+  value     String // texto plano (ajustes no secretos) o v1.<iv>.<tag>.<cifrado>
+  secret    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String? // correo de quien lo cambió
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   userId    String?

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { env } from "@/lib/env";
+import { getConfig } from "@/lib/config";
 import { requireUser } from "@/lib/auth";
 import { Badge, Card, Empty } from "@/components/ui";
 import { MemberForm } from "@/components/forms";
@@ -14,6 +14,7 @@ export const maxDuration = 300; // las acciones de sincronización corren en est
 export default async function TeamPage() {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
+  const cfg = await getConfig();
   const [active, archived] = await Promise.all([
     db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
     db.member.findMany({ where: { archivedAt: { not: null } }, orderBy: { archivedAt: "desc" } }),
@@ -53,13 +54,13 @@ export default async function TeamPage() {
                   <td className="td">{m.email}</td>
                   <td className="td">
                     {m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}
-                    {m.githubLogin && env.githubConfigured && !m.githubSyncedAt && (
+                    {m.githubLogin && cfg.githubConfigured && !m.githubSyncedAt && (
                       <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
                     )}
                   </td>
                   <td className="td">
                     {m.zohoUserId ? <Badge tone="green">vinculado</Badge> : <Badge tone="gray">pendiente</Badge>}
-                    {env.zohoConfigured && !m.zohoSyncedAt && (
+                    {cfg.zohoConfigured && !m.zohoSyncedAt && (
                       <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
                     )}
                   </td>

@@ -1,15 +1,26 @@
 import { db } from "./db";
 import { env } from "./env";
+import { getConfig } from "./config";
+import { mapPool } from "./http";
 import { resolveGithubLogin, searchPullRequests, type GhPullRequest } from "./github";
-import { listZohoProjects, listZohoTasks, listZohoUsers, zohoTaskUrl } from "./zoho";
+import { listZohoProjects, listZohoTasks, listZohoUsers, zohoTaskUrl, type ZohoTaskData } from "./zoho";
 
 export type SyncSource = "GITHUB" | "ZOHO";
-export type SyncOpts = { full?: boolean; trigger: string };
+export type SyncOpts = {
+  full?: boolean;
+  trigger: string;
+  /**
+   * Traslape generoso (1 día) para atrapar cambios que la búsqueda de GitHub tarda en indexar. La sincronización
+   * automática usa uno corto (20 min) para ser rápida; el cron diario y el botón manual usan el generoso.
+   */
+  deep?: boolean;
+};
 // OK = todo bien · WARNING = terminó, pero con avisos que no afectan los datos (p. ej. alguien sin usuario de GitHub)
 // ERROR = alguna consulta falló y faltan datos por traer · SKIPPED = no se ejecutó.
 export type SyncOutcome = {
   source: SyncSource;
   status: "OK" | "WARNING" | "ERROR" | "SKIPPED";
+  /** PRs / tareas nuevos o modificados que se guardaron en esta corrida. */
   items: number;
   message?: string;
 };
@@ -17,16 +28,24 @@ type RunResult = { items: number; warnings: string[]; errors: string[] };
 
 const STALE_RUN_MS = 10 * 60 * 1000; // las funciones duran máx. 5 min
 const DAY = 24 * 3600 * 1000;
+const LIGHT_OVERLAP_MS = 20 * 60 * 1000;
+const GITHUB_CONCURRENCY = 4; // peticiones a GitHub en paralelo (con más se arriesgan límites secundarios)
+const ZOHO_CONCURRENCY = 3;
+const DB_CHUNK = 100;
 
-async function sinceDate(source: SyncSource, full?: boolean): Promise<Date> {
+const overlapMs = (opts: SyncOpts) => (opts.deep ? DAY : LIGHT_OVERLAP_MS);
+const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
+const timestamp = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
+const chunks = <T>(a: T[], n: number): T[][] => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, (i + 1) * n));
+
+async function sinceDate(source: SyncSource, opts: SyncOpts): Promise<Date> {
   const lookback = new Date(Date.now() - env.syncLookbackDays * DAY);
-  if (full) return lookback;
+  if (opts.full) return lookback;
   const last = await db.syncRun.findFirst({
     where: { source, status: { in: ["OK", "WARNING"] } }, // WARNING también terminó y trajo todo
     orderBy: { startedAt: "desc" },
   });
-  // 1 día de traslape para no perder cambios en el borde.
-  return last ? new Date(Math.max(last.startedAt.getTime() - DAY, lookback.getTime())) : lookback;
+  return last ? new Date(Math.max(last.startedAt.getTime() - overlapMs(opts), lookback.getTime())) : lookback;
 }
 
 async function runTracked(
@@ -40,9 +59,11 @@ async function runTracked(
   });
   const running = await db.syncRun.findFirst({ where: { source, status: "RUNNING" } });
   if (running) {
-    // Se deja constancia del intento omitido. Nada se pierde: los cursores por persona
-    // hacen que la siguiente sincronización complete lo pendiente.
     const message = "Ya había una sincronización en curso; este intento se omitió";
+    // La sincronización automática se omite en silencio (pasa a menudo y no aporta nada al historial).
+    if (trigger === "auto" || trigger === "refresh") return { source, status: "SKIPPED", items: 0, message };
+    // En los demás casos se deja constancia. Nada se pierde: los cursores por persona
+    // hacen que la siguiente sincronización complete lo pendiente.
     await db.syncRun.create({ data: { source, trigger, status: "SKIPPED", error: message, finishedAt: new Date() } });
     return { source, status: "SKIPPED", items: 0, message };
   }
@@ -67,18 +88,21 @@ async function runTracked(
 
 // ───────────────────────────── GitHub ─────────────────────────────
 
-export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
-  if (!env.githubConfigured) {
-    return Promise.resolve({ source: "GITHUB", status: "SKIPPED", items: 0, message: "GITHUB_TOKEN no configurado" });
+type MemberRow = { id: string; githubLogin: string | null; email: string; archivedAt: Date | null; githubSyncedAt: Date | null };
+
+export async function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
+  const cfg = await getConfig();
+  if (!cfg.githubConfigured) {
+    return { source: "GITHUB", status: "SKIPPED", items: 0, message: "El token de GitHub no está configurado" };
   }
   return runTracked("GITHUB", opts.trigger, async () => {
     const warnings: string[] = []; // avisos: no afectan los datos traídos
     const errors: string[] = []; // fallas: faltan datos y se reintentarán
     const startedAt = new Date(); // el cursor de cada persona avanza hasta aquí, no hasta que termine la corrida
     const lookback = new Date(startedAt.getTime() - env.syncLookbackDays * DAY);
-    const org = env.githubOrg ? ` org:${env.githubOrg}` : "";
+    const org = cfg.github.org ? ` org:${cfg.github.org}` : "";
 
-    const all = await db.member.findMany({
+    const all: MemberRow[] = await db.member.findMany({
       select: { id: true, githubLogin: true, email: true, archivedAt: true, githubSyncedAt: true },
     });
     const byLogin = new Map<string, string>();
@@ -100,40 +124,57 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
       }
     }
 
-    // 2) Traer PRs creados y revisados por cada miembro activo.
+    // 2) Traer PRs creados y revisados por cada miembro activo, varios a la vez.
+    const targets = all.filter((x) => x.githubLogin && !x.archivedAt);
+    const backfilled: string[] = [];
     let items = 0;
-    for (const m of all.filter((x) => x.githubLogin && !x.archivedAt)) {
+
+    await mapPool(targets, GITHUB_CONCURRENCY, async (m) => {
       const login = m.githubLogin!;
       // Sin cursor (persona nueva, restaurada o con usuario cambiado) o sync completa: todo el periodo.
-      // Con cursor: desde ahí, con 1 día de traslape para no perder cambios en el borde.
-      const from =
-        opts.full || !m.githubSyncedAt
-          ? lookback
-          : new Date(Math.max(m.githubSyncedAt.getTime() - DAY, lookback.getTime()));
-      const since = from.toISOString().slice(0, 10);
-      const queries = [
+      // Con cursor: desde ahí, con un traslape corto; el cursor tiene hora exacta, no solo día.
+      const pending = Boolean(opts.full) || !m.githubSyncedAt;
+      const from = pending ? lookback : new Date(Math.max(m.githubSyncedAt!.getTime() - overlapMs(opts), lookback.getTime()));
+      const build = (since: string) => [
         `is:pr author:${login}${org} updated:>=${since}`,
         `is:pr reviewed-by:${login} -author:${login}${org} updated:>=${since}`,
       ];
-      let failed = false;
-      for (const q of queries) {
-        try {
+
+      const found = new Map<string, GhPullRequest>();
+      const collect = async (since: string) => {
+        for (const q of build(since)) {
           for await (const { pr, total } of searchPullRequests(q)) {
-            await upsertPr(pr, byLogin);
-            items++;
+            found.set(pr.id, pr);
             if (total > 1000) warnings.push(`Más de 1000 resultados para ${login}: reduce SYNC_LOOKBACK_DAYS`);
           }
-        } catch (e) {
-          failed = true;
-          errors.push(`${login}: ${e instanceof Error ? e.message : e}`);
         }
+      };
+      try {
+        try {
+          await collect(pending ? dateOnly(from) : timestamp(from));
+        } catch (e) {
+          // Si GitHub rechazara el formato con hora, se reintenta con solo la fecha (más amplio, mismo resultado).
+          const msg = e instanceof Error ? e.message : "";
+          if (!pending && /validation|invalid|unprocessable|cannot parse/i.test(msg)) {
+            found.clear();
+            await collect(dateOnly(from));
+          } else throw e;
+        }
+        // Ojo: se espera primero y se suma después; `items += await …` leería `items` antes de esperar y,
+        // con varias personas en paralelo, perdería sumas.
+        const saved = await savePrs([...found.values()], byLogin);
+        items += saved;
+        if (pending) backfilled.push(login);
+        // Si algo falló arriba, el cursor no avanza y la próxima corrida reintenta desde el mismo punto.
+        await db.member.update({ where: { id: m.id }, data: { githubSyncedAt: startedAt } });
+      } catch (e) {
+        errors.push(`${login}: ${e instanceof Error ? e.message : e}`);
       }
-      // Si algo falló, el cursor no avanza y la próxima corrida reintenta desde el mismo punto.
-      if (!failed) await db.member.update({ where: { id: m.id }, data: { githubSyncedAt: startedAt } });
-    }
+    });
 
-    // 3) Reasignar PRs/reviews históricos de miembros agregados después.
-    for (const [login, memberId] of byLogin) {
+    // 3) Reasignar PRs/reviews históricos de las personas cuyo historial se acaba de traer.
+    for (const login of backfilled) {
+      const memberId = byLogin.get(login)!;
       await db.pullRequest.updateMany({ where: { authorLogin: login, memberId: null }, data: { memberId } });
       await db.prReview.updateMany({ where: { reviewerLogin: login, memberId: null }, data: { memberId } });
     }
@@ -141,7 +182,7 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
   });
 }
 
-async function upsertPr(pr: GhPullRequest, byLogin: Map<string, string>): Promise<void> {
+function prFields(pr: GhPullRequest, byLogin: Map<string, string>) {
   const author = (pr.author?.login ?? "ghost").toLowerCase();
   const reviews = (pr.reviews.nodes ?? []).filter(
     (r): r is NonNullable<typeof r> =>
@@ -150,7 +191,6 @@ async function upsertPr(pr: GhPullRequest, byLogin: Map<string, string>): Promis
   const firstReviewAt = reviews.length
     ? new Date(Math.min(...reviews.map((r) => new Date(r.submittedAt!).getTime())))
     : null;
-
   const data = {
     repo: pr.repository.nameWithOwner,
     number: pr.number,
@@ -170,42 +210,92 @@ async function upsertPr(pr: GhPullRequest, byLogin: Map<string, string>): Promis
     changedFiles: pr.changedFiles,
     commentsCount: pr.comments.totalCount,
   };
-  const row = await db.pullRequest.upsert({
-    where: { githubId: pr.id },
-    create: { githubId: pr.id, ...data },
-    update: data,
-    select: { id: true },
-  });
-  for (const r of reviews) {
-    const reviewer = r.author!.login.toLowerCase();
-    const rd = {
-      pullRequestId: row.id,
-      reviewerLogin: reviewer,
-      memberId: byLogin.get(reviewer) ?? null,
-      state: r.state,
-      submittedAt: new Date(r.submittedAt!),
-    };
-    await db.prReview.upsert({ where: { githubId: r.id }, create: { githubId: r.id, ...rd }, update: rd });
+  return { data, reviews };
+}
+
+/**
+ * Guarda PRs en lotes: una consulta para saber cuáles ya existen, una inserción masiva para los nuevos, una
+ * transacción para los modificados y una inserción masiva de reviews. Los PRs que no cambiaron se omiten.
+ * Devuelve cuántos PRs se crearon o actualizaron.
+ */
+async function savePrs(prs: GhPullRequest[], byLogin: Map<string, string>): Promise<number> {
+  let changed = 0;
+  for (const batch of chunks(prs, DB_CHUNK)) {
+    const existing = await db.pullRequest.findMany({
+      where: { githubId: { in: batch.map((p) => p.id) } },
+      select: { id: true, githubId: true, updatedAtGh: true, memberId: true },
+    });
+    const have = new Map(existing.map((e) => [e.githubId, e]));
+
+    const toCreate: Array<ReturnType<typeof prFields>["data"] & { githubId: string }> = [];
+    const toUpdate: Array<{ id: string; data: ReturnType<typeof prFields>["data"] }> = [];
+    const touched: Array<{ pr: GhPullRequest; reviews: ReturnType<typeof prFields>["reviews"] }> = [];
+    for (const pr of batch) {
+      const { data, reviews } = prFields(pr, byLogin);
+      const cur = have.get(pr.id);
+      if (!cur) {
+        toCreate.push({ githubId: pr.id, ...data });
+        touched.push({ pr, reviews });
+      } else if (cur.updatedAtGh < data.updatedAtGh || cur.memberId !== data.memberId) {
+        toUpdate.push({ id: cur.id, data });
+        touched.push({ pr, reviews });
+      }
+    }
+    if (!touched.length) continue;
+
+    if (toCreate.length) await db.pullRequest.createMany({ data: toCreate, skipDuplicates: true });
+    for (const part of chunks(toUpdate, 50)) {
+      await db.$transaction(part.map((u) => db.pullRequest.update({ where: { id: u.id }, data: u.data })));
+    }
+
+    // Reviews de los PRs nuevos o modificados (las ya guardadas se omiten por su id de GitHub).
+    const idRows = await db.pullRequest.findMany({
+      where: { githubId: { in: touched.map((t) => t.pr.id) } },
+      select: { id: true, githubId: true },
+    });
+    const idOf = new Map(idRows.map((r) => [r.githubId, r.id]));
+    const reviewRows = touched.flatMap(({ pr, reviews }) =>
+      reviews.flatMap((r) => {
+        const pullRequestId = idOf.get(pr.id);
+        if (!pullRequestId) return [];
+        const reviewer = r.author!.login.toLowerCase();
+        return [
+          {
+            githubId: r.id,
+            pullRequestId,
+            reviewerLogin: reviewer,
+            memberId: byLogin.get(reviewer) ?? null,
+            state: r.state,
+            submittedAt: new Date(r.submittedAt!),
+          },
+        ];
+      }),
+    );
+    for (const part of chunks(reviewRows, 500)) await db.prReview.createMany({ data: part, skipDuplicates: true });
+    changed += touched.length;
   }
+  return changed;
 }
 
 // ───────────────────────────── Zoho ─────────────────────────────
 
-export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
-  if (!env.zohoConfigured) {
-    return Promise.resolve({ source: "ZOHO", status: "SKIPPED", items: 0, message: "Credenciales de Zoho no configuradas" });
+export async function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
+  const cfg = await getConfig();
+  if (!cfg.zohoConfigured) {
+    return { source: "ZOHO", status: "SKIPPED", items: 0, message: "Credenciales de Zoho no configuradas" };
   }
+  const zoho = cfg.zoho;
   return runTracked("ZOHO", opts.trigger, async () => {
     const warnings: string[] = [];
     const errors: string[] = [];
     const startedAt = new Date();
-    const sinceMs = (await sinceDate("ZOHO", false)).getTime();
+    const sinceMs = (await sinceDate("ZOHO", opts)).getTime();
 
     const members = await db.member.findMany();
     // Las tareas se consultan por proyecto, no por persona: si alguien activo no tiene su historial
     // de Zoho, esta corrida trae todas las tareas (una sola vez); si no, solo las modificadas.
     const fetchAll = opts.full || members.some((m) => !m.archivedAt && !m.zohoSyncedAt);
-    const zUsers = await listZohoUsers();
+    const zUsers = await listZohoUsers(zoho);
     const idByEmail = new Map(zUsers.map((u) => [u.email, u.id]));
 
     // 1) Ligar miembro <-> usuario de Zoho por correo.
@@ -222,53 +312,71 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
       if (!zid && !m.archivedAt) warnings.push(`${m.email} no existe como usuario en Zoho`);
     }
 
-    // 2) Tareas por proyecto; solo se guardan las que tienen al menos un miembro como responsable.
-    let items = 0;
-    const projects = await listZohoProjects();
-    let projectFailed = false;
-    for (const p of projects) {
-      try {
-        for await (const t of listZohoTasks(p.id, fetchAll ? undefined : sinceMs)) {
-          const ids = new Set<string>();
-          for (const o of t.owners) {
-            const id =
-              (o.id && byZohoId.get(o.id)) || (o.zpuid && byZohoId.get(o.zpuid)) || (o.email && byEmail.get(o.email));
-            if (id) ids.add(id);
-          }
-          const existing = await db.zohoTask.findUnique({ where: { zohoId: t.zohoId }, select: { id: true, completedAt: true } });
-          if (!ids.size && !existing) continue;
+    const ownersOf = (t: ZohoTaskData): Set<string> => {
+      const ids = new Set<string>();
+      for (const o of t.owners) {
+        const id = (o.id && byZohoId.get(o.id)) || (o.zpuid && byZohoId.get(o.zpuid)) || (o.email && byEmail.get(o.email));
+        if (id) ids.add(id);
+      }
+      return ids;
+    };
 
-          // Zoho no informa la fecha de cierre en el listado: si no viene, usamos la primera
-          // vez que la vimos completada con su última modificación (aproximación).
-          const completedAt = !t.completed
-            ? null
-            : (t.completedAt ?? existing?.completedAt ?? t.updatedAt ?? new Date());
-          const data = {
-            projectId: p.id,
-            projectName: p.name,
-            name: t.name.slice(0, 500),
-            status: t.status,
-            completed: t.completed,
-            priority: t.priority,
-            url: zohoTaskUrl(p.id, t.zohoId),
-            createdAtZ: t.createdAt,
-            updatedAtZ: t.updatedAt,
-            completedAt,
-            dueDate: t.dueDate,
-          };
-          const memberIds = [...ids].map((id) => ({ id }));
-          await db.zohoTask.upsert({
-            where: { zohoId: t.zohoId },
-            create: { zohoId: t.zohoId, ...data, members: { connect: memberIds } },
-            update: { ...data, members: { set: memberIds } },
+    // 2) Tareas por proyecto (varios a la vez); solo se guardan las que tienen al menos un miembro como responsable.
+    let items = 0;
+    const projects = await listZohoProjects(zoho);
+    let projectFailed = false;
+    await mapPool(projects, ZOHO_CONCURRENCY, async (p) => {
+      try {
+        const tasks: ZohoTaskData[] = [];
+        for await (const t of listZohoTasks(zoho, p.id, fetchAll ? undefined : sinceMs)) tasks.push(t);
+
+        for (const batch of chunks(tasks, DB_CHUNK)) {
+          const existing = await db.zohoTask.findMany({
+            where: { zohoId: { in: batch.map((t) => t.zohoId) } },
+            select: { zohoId: true, completedAt: true, updatedAtZ: true, members: { select: { id: true } } },
           });
-          items++;
+          const have = new Map(existing.map((e) => [e.zohoId, e]));
+
+          const work = batch.flatMap((t) => {
+            const ids = ownersOf(t);
+            const cur = have.get(t.zohoId);
+            if (!ids.size && !cur) return []; // no es de nadie del equipo
+            const sameMembers = cur && cur.members.length === ids.size && cur.members.every((m) => ids.has(m.id));
+            if (cur && sameMembers && cur.updatedAtZ?.getTime() === t.updatedAt?.getTime()) return []; // sin cambios
+            return [{ t, ids, cur }];
+          });
+
+          await mapPool(work, 5, async ({ t, ids, cur }) => {
+            // Zoho no informa la fecha de cierre en el listado: si no viene, usamos la primera
+            // vez que la vimos completada con su última modificación (aproximación).
+            const completedAt = !t.completed ? null : (t.completedAt ?? cur?.completedAt ?? t.updatedAt ?? new Date());
+            const data = {
+              projectId: p.id,
+              projectName: p.name,
+              name: t.name.slice(0, 500),
+              status: t.status,
+              completed: t.completed,
+              priority: t.priority,
+              url: zohoTaskUrl(zoho, p.id, t.zohoId),
+              createdAtZ: t.createdAt,
+              updatedAtZ: t.updatedAt,
+              completedAt,
+              dueDate: t.dueDate,
+            };
+            const memberIds = [...ids].map((id) => ({ id }));
+            await db.zohoTask.upsert({
+              where: { zohoId: t.zohoId },
+              create: { zohoId: t.zohoId, ...data, members: { connect: memberIds } },
+              update: { ...data, members: { set: memberIds } },
+            });
+          });
+          items += work.length;
         }
       } catch (e) {
         projectFailed = true;
         errors.push(`Proyecto ${p.name}: ${e instanceof Error ? e.message : e}`);
       }
-    }
+    });
     // Solo si ningún proyecto falló se da por traído el historial.
     if (!projectFailed) {
       await db.member.updateMany({ where: { archivedAt: null }, data: { zohoSyncedAt: startedAt } });
@@ -279,15 +387,15 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
 
 /** Cuántos compañeros activos todavía no tienen su historial traído (solo cuenta fuentes configuradas). */
 export async function countPendingBackfill(): Promise<number> {
+  const cfg = await getConfig();
   const pending = [];
-  if (env.githubConfigured) pending.push({ githubLogin: { not: null }, githubSyncedAt: null });
-  if (env.zohoConfigured) pending.push({ zohoSyncedAt: null });
+  if (cfg.githubConfigured) pending.push({ githubLogin: { not: null }, githubSyncedAt: null });
+  if (cfg.zohoConfigured) pending.push({ zohoSyncedAt: null });
   if (!pending.length) return 0;
   return db.member.count({ where: { archivedAt: null, OR: pending } });
 }
 
-export async function syncAll(opts: SyncOpts): Promise<SyncOutcome[]> {
-  const gh = await syncGithub(opts);
-  const zo = await syncZoho(opts);
-  return [gh, zo];
+/** GitHub y Zoho en paralelo: son fuentes independientes y cada una lleva su propio control de concurrencia. */
+export async function syncAll(opts: SyncOpts): Promise<[github: SyncOutcome, zoho: SyncOutcome]> {
+  return Promise.all([syncGithub(opts), syncZoho(opts)]);
 }

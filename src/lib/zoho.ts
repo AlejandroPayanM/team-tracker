@@ -1,4 +1,4 @@
-import { env } from "./env";
+import type { ZohoCfg } from "./config";
 import { cleanErrorBody } from "./http";
 
 // Endpoints usados (documentación oficial de Zoho Projects, rutas /restapi/):
@@ -8,6 +8,11 @@ import { cleanErrorBody } from "./http";
 // Scopes del refresh token: ZohoProjects.portals.READ, ZohoProjects.projects.READ,
 //   ZohoProjects.users.READ, ZohoProjects.tasks.READ
 // No se consultan timesheets: no pude verificar su endpoint en la documentación.
+//
+// Todas las funciones reciben la configuración (`cfg`) para poder probar credenciales nuevas
+// antes de guardarlas.
+
+export const ZOHO_DCS = ["com", "eu", "in", "com.au", "jp"] as const;
 
 const DCS: Record<string, { accounts: string; api: string }> = {
   com: { accounts: "https://accounts.zoho.com", api: "https://projectsapi.zoho.com" },
@@ -17,24 +22,27 @@ const DCS: Record<string, { accounts: string; api: string }> = {
   jp: { accounts: "https://accounts.zoho.jp", api: "https://projectsapi.zoho.jp" },
 };
 
-function hosts() {
-  const base = DCS[env.zohoDc] ?? DCS.com!;
-  return { accounts: env.zohoAccountsUrl ?? base.accounts, api: env.zohoApiUrl ?? base.api };
+function hosts(cfg: ZohoCfg) {
+  const base = DCS[cfg.dc] ?? DCS.com!;
+  return { accounts: cfg.accountsUrl ?? base.accounts, api: cfg.apiUrl ?? base.api };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-let cached: { token: string; expiresAt: number } | null = null;
+// El token de acceso se reutiliza mientras no cambien las credenciales con que se obtuvo.
+let cached: { key: string; token: string; expiresAt: number } | null = null;
+const cacheKey = (cfg: ZohoCfg) => `${cfg.dc}|${cfg.clientId}|${cfg.refreshToken}`;
 
-async function accessToken(): Promise<string> {
-  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+async function accessToken(cfg: ZohoCfg): Promise<string> {
+  const key = cacheKey(cfg);
+  if (cached && cached.key === key && cached.expiresAt > Date.now() + 60_000) return cached.token;
   const body = new URLSearchParams({
     grant_type: "refresh_token",
-    refresh_token: env.zohoRefreshToken ?? "",
-    client_id: env.zohoClientId ?? "",
-    client_secret: env.zohoClientSecret ?? "",
+    refresh_token: cfg.refreshToken ?? "",
+    client_id: cfg.clientId ?? "",
+    client_secret: cfg.clientSecret ?? "",
   });
-  const res = await fetch(`${hosts().accounts}/oauth/v2/token`, {
+  const res = await fetch(`${hosts(cfg).accounts}/oauth/v2/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -42,28 +50,33 @@ async function accessToken(): Promise<string> {
   });
   const j = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
   if (!res.ok || !j.access_token) {
-    throw new Error(`Zoho OAuth falló (${res.status}): ${j.error ?? "sin detalle"}. Revisa ZOHO_DC y las credenciales.`);
+    throw new Error(`Zoho OAuth falló (${res.status}): ${j.error ?? "sin detalle"}. Revisa el data center y las credenciales.`);
   }
-  cached = { token: j.access_token, expiresAt: Date.now() + (j.expires_in ?? 3600) * 1000 };
+  cached = { key, token: j.access_token, expiresAt: Date.now() + (j.expires_in ?? 3600) * 1000 };
   return cached.token;
 }
 
-async function zget<T>(path: string, params: Record<string, string | number> = {}, attempt = 0): Promise<T | null> {
-  const url = new URL(`${hosts().api}/restapi/portal/${encodeURIComponent(env.zohoPortalId ?? "")}${path}`);
+async function zget<T>(
+  cfg: ZohoCfg,
+  path: string,
+  params: Record<string, string | number> = {},
+  attempt = 0,
+): Promise<T | null> {
+  const url = new URL(`${hosts(cfg).api}/restapi/portal/${encodeURIComponent(cfg.portalId ?? "")}${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   const res = await fetch(url, {
-    headers: { Authorization: `Zoho-oauthtoken ${await accessToken()}`, Accept: "application/json" },
+    headers: { Authorization: `Zoho-oauthtoken ${await accessToken(cfg)}`, Accept: "application/json" },
     signal: AbortSignal.timeout(30_000),
   });
   await sleep(200); // cortesía para no saturar la API
   if (res.status === 204) return null; // sin resultados
   if (res.status === 401 && attempt === 0) {
     cached = null;
-    return zget<T>(path, params, attempt + 1);
+    return zget<T>(cfg, path, params, attempt + 1);
   }
   if ((res.status === 429 || res.status >= 500) && attempt < 3) {
     await sleep(5000 * (attempt + 1));
-    return zget<T>(path, params, attempt + 1);
+    return zget<T>(cfg, path, params, attempt + 1);
   }
   if (!res.ok) {
     const body = cleanErrorBody(await res.text());
@@ -74,8 +87,9 @@ async function zget<T>(path: string, params: Record<string, string | number> = {
 
 export type ZohoUser = { id: string; email: string; name: string; active: boolean };
 
-export async function listZohoUsers(): Promise<ZohoUser[]> {
+export async function listZohoUsers(cfg: ZohoCfg): Promise<ZohoUser[]> {
   const j = await zget<{ users?: Array<{ id: string | number; email?: string; name?: string; active?: boolean }> }>(
+    cfg,
     "/users/",
     { user_type: "all" },
   );
@@ -91,10 +105,10 @@ export async function listZohoUsers(): Promise<ZohoUser[]> {
 
 export type ZohoProject = { id: string; name: string };
 
-export async function listZohoProjects(): Promise<ZohoProject[]> {
+export async function listZohoProjects(cfg: ZohoCfg): Promise<ZohoProject[]> {
   const out: ZohoProject[] = [];
   for (let index = 1; index < 5000; index += 100) {
-    const j = await zget<{ projects?: Array<{ id: string | number; name: string }> }>("/projects/", {
+    const j = await zget<{ projects?: Array<{ id: string | number; name: string }> }>(cfg, "/projects/", {
       index,
       range: 100,
     });
@@ -161,7 +175,7 @@ function parseTask(t: RawTask): ZohoTaskData {
 }
 
 /** Itera las tareas de un proyecto modificadas desde `sinceMs` (o todas si es undefined). */
-export async function* listZohoTasks(projectId: string, sinceMs?: number): AsyncGenerator<ZohoTaskData> {
+export async function* listZohoTasks(cfg: ZohoCfg, projectId: string, sinceMs?: number): AsyncGenerator<ZohoTaskData> {
   for (let index = 1; index < 20_000; index += 100) {
     const params: Record<string, string | number> = {
       index,
@@ -172,24 +186,22 @@ export async function* listZohoTasks(projectId: string, sinceMs?: number): Async
       sort_order: "descending",
     };
     if (sinceMs) params.last_modified_time = sinceMs;
-    const j = await zget<{ tasks?: RawTask[] }>(`/projects/${encodeURIComponent(projectId)}/tasks/`, params);
+    const j = await zget<{ tasks?: RawTask[] }>(cfg, `/projects/${encodeURIComponent(projectId)}/tasks/`, params);
     const batch = j?.tasks ?? [];
     for (const t of batch) yield parseTask(t);
     if (batch.length < 100) break;
   }
 }
 
-export function zohoTaskUrl(projectId: string, taskId: string): string | null {
-  const name = env.zohoPortalName;
-  if (!name) return null;
-  const { api } = hosts();
-  const web = api.replace("projectsapi.", "projects.");
-  return `${web}/portal/${encodeURIComponent(name)}#taskdetail/${projectId}/${taskId}`;
+export function zohoTaskUrl(cfg: ZohoCfg, projectId: string, taskId: string): string | null {
+  if (!cfg.portalName) return null;
+  const web = hosts(cfg).api.replace("projectsapi.", "projects.");
+  return `${web}/portal/${encodeURIComponent(cfg.portalName)}#taskdetail/${projectId}/${taskId}`;
 }
 
-export async function checkZoho(): Promise<{ ok: true; users: number } | { ok: false; error: string }> {
+export async function checkZoho(cfg: ZohoCfg): Promise<{ ok: true; users: number } | { ok: false; error: string }> {
   try {
-    const users = await listZohoUsers();
+    const users = await listZohoUsers(cfg);
     return { ok: true, users: users.length };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

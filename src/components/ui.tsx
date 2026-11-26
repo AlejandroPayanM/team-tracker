@@ -99,10 +99,24 @@ const PRESETS = [
   { label: "Últimas 26", n: 26, offset: 0 },
 ];
 
-/** Selector de rango de semanas: atajos, flechas por bloques y dos fechas libres (GET, sin JS). */
-export function RangeNav({ base, range }: { base: string; range: WeekRange }) {
+/**
+ * Selector de rango de semanas: atajos, flechas por bloques y dos fechas libres (GET, sin JS).
+ * Si recibe `repos` agrega un filtro por repositorio ("Todos" por defecto) que se conserva al navegar.
+ */
+export function RangeNav({
+  base,
+  range,
+  repos,
+  repo,
+}: {
+  base: string;
+  range: WeekRange;
+  repos?: string[];
+  repo?: string;
+}) {
   const cur = startOfWeek(new Date());
-  const href = (s: Date, e: Date) => `${base}?from=${weekParam(s)}&to=${weekParam(e)}`;
+  const href = (s: Date, e: Date) =>
+    `${base}?from=${weekParam(s)}&to=${weekParam(e)}${repo ? `&repo=${encodeURIComponent(repo)}` : ""}`;
   const atEnd = range.end.getTime() >= cur.getTime();
   const same = (a: Date, b: Date) => a.getTime() === b.getTime();
   return (
@@ -148,6 +162,20 @@ export function RangeNav({ base, range }: { base: string; range: WeekRange }) {
           hasta la semana del
           <input type="date" name="to" defaultValue={weekParam(range.end)} required className="input mt-0.5 block w-auto" />
         </label>
+        {repos && (
+          <label className="text-xs text-slate-500">
+            Repositorio
+            <select name="repo" defaultValue={repo ?? ""} className="input mt-0.5 block w-auto max-w-64">
+              <option value="">Todos los repositorios</option>
+              {repos.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+              {repo && !repos.includes(repo) && <option value={repo}>{repo}</option>}
+            </select>
+          </label>
+        )}
         <button type="submit" className="btn-ghost">
           Ver
         </button>

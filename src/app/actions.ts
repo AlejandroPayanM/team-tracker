@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { env } from "@/lib/env";
+import { getConfig, invalidateConfig } from "@/lib/config";
+import { SETTING_DEFS, loadStoredSettings, removeSettings, saveSettings, type SettingKey } from "@/lib/settings";
+import { encryptionAvailable } from "@/lib/secrets";
 import { audit } from "@/lib/audit";
 import {
   clientIp,
@@ -18,7 +20,14 @@ import {
   revokeOtherSessions,
   verifyLogin,
 } from "@/lib/auth";
-import { firstError, loginSchema, memberSchema, noteSchema } from "@/lib/validation";
+import {
+  firstError,
+  githubCredsSchema,
+  loginSchema,
+  memberSchema,
+  noteSchema,
+  zohoCredsSchema,
+} from "@/lib/validation";
 import { checkGithub, resolveGithubLogin } from "@/lib/github";
 import { checkZoho } from "@/lib/zoho";
 import { syncAll } from "@/lib/sync";
@@ -99,7 +108,7 @@ export async function createMemberAction(_prev: FormState, fd: FormData): Promis
   const d = parsed.data;
 
   let githubLogin = d.githubLogin ?? null;
-  if (!githubLogin && env.githubConfigured) {
+  if (!githubLogin && (await getConfig()).githubConfigured) {
     githubLogin = await resolveGithubLogin(d.email).catch(() => null);
   }
 
@@ -250,7 +259,7 @@ export async function deleteNoteAction(fd: FormData): Promise<void> {
 export async function syncNowAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireAdmin();
   const full = fd.get("full") === "on";
-  const results = await syncAll({ full, trigger: "manual" });
+  const results = await syncAll({ full, trigger: "manual", deep: true });
   await audit("sync.manual", { detail: `${full ? "full " : ""}${JSON.stringify(results)}`.slice(0, 400) });
   revalidatePath("/", "layout");
   const text = results
@@ -265,17 +274,152 @@ export async function syncNowAction(_prev: FormState, fd: FormData): Promise<For
 
 export async function testConnectionsAction(_prev: FormState): Promise<FormState> {
   await requireAdmin();
+  invalidateConfig();
+  const cfg = await getConfig();
   const parts: string[] = [];
   let failed = false;
-  if (env.githubConfigured) {
+  if (cfg.githubConfigured) {
     const r = await checkGithub();
     parts.push(r.ok ? `GitHub OK (token de ${r.login})` : `GitHub: ${r.error}`);
     failed ||= !r.ok;
   } else parts.push("GitHub: sin configurar");
-  if (env.zohoConfigured) {
-    const r = await checkZoho();
+  if (cfg.zohoConfigured) {
+    const r = await checkZoho(cfg.zoho);
     parts.push(r.ok ? `Zoho OK (${r.users} usuarios en el portal)` : `Zoho: ${r.error}`);
     failed ||= !r.ok;
   } else parts.push("Zoho: sin configurar");
   return failed ? { error: parts.join(" · ") } : { ok: parts.join(" · ") };
+}
+
+// ───────── Credenciales guardadas en la app ─────────
+
+const NO_KEY_MSG =
+  "Para guardar secretos en la app primero define la variable APP_ENCRYPTION_KEY (≥ 32 caracteres aleatorios) en Vercel y redespliega.";
+
+const GROUPS: Record<"github" | "zoho", SettingKey[]> = {
+  github: ["github.token", "github.org"],
+  zoho: ["zoho.dc", "zoho.clientId", "zoho.clientSecret", "zoho.refreshToken", "zoho.portalId", "zoho.portalName"],
+};
+
+/** Guarda lo que cambió: secretos solo si se escribió uno nuevo; no secretos si difieren del valor efectivo. */
+async function applyChanges(
+  incoming: Partial<Record<SettingKey, string>>,
+  effective: Partial<Record<SettingKey, string | undefined>>,
+  stored: Set<SettingKey>,
+  by: string,
+): Promise<{ saved: SettingKey[]; removed: SettingKey[] }> {
+  const toSave: Partial<Record<SettingKey, string>> = {};
+  const toRemove: SettingKey[] = [];
+  for (const [k, v] of Object.entries(incoming) as [SettingKey, string][]) {
+    if (SETTING_DEFS[k].secret) {
+      if (v) toSave[k] = v; // vacío = no cambiar
+    } else if (v === "") {
+      if (stored.has(k)) toRemove.push(k); // vacío = quitar lo guardado (vuelve a la variable de entorno)
+    } else if (v !== effective[k]) {
+      toSave[k] = v;
+    }
+  }
+  await saveSettings(toSave, by);
+  await removeSettings(toRemove);
+  invalidateConfig();
+  return { saved: Object.keys(toSave) as SettingKey[], removed: toRemove };
+}
+
+export async function saveGithubCredentialsAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  const user = await requireAdmin();
+  const parsed = githubCredsSchema.safeParse({ token: str(fd, "token"), org: str(fd, "org") });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const { token, org } = parsed.data;
+  if (token && !encryptionAvailable()) return { error: NO_KEY_MSG };
+
+  let note = "";
+  if (token && fd.get("skipTest") !== "on") {
+    const r = await checkGithub(token); // se prueba ANTES de guardar
+    if (!r.ok) return { error: `El token no funciona: ${r.error}. No se guardó nada.` };
+    note = ` Token válido (cuenta ${r.login}).`;
+  }
+
+  invalidateConfig();
+  const [cfg, storedNow] = await Promise.all([getConfig(), loadStoredSettings()]);
+  const { saved, removed } = await applyChanges(
+    { "github.token": token, "github.org": org },
+    { "github.org": cfg.github.org },
+    new Set(storedNow.values.keys()),
+    user.email,
+  );
+  // Solo se registran los nombres de los ajustes, nunca sus valores.
+  await audit("settings.github", { detail: `guardó: ${saved.join(", ") || "—"}; quitó: ${removed.join(", ") || "—"}` });
+  revalidatePath("/settings");
+  return saved.length || removed.length ? { ok: `Guardado.${note}` } : { ok: "No había cambios que guardar." };
+}
+
+export async function saveZohoCredentialsAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  const user = await requireAdmin();
+  const parsed = zohoCredsSchema.safeParse({
+    dc: str(fd, "dc"),
+    clientId: str(fd, "clientId"),
+    clientSecret: str(fd, "clientSecret"),
+    refreshToken: str(fd, "refreshToken"),
+    portalId: str(fd, "portalId"),
+    portalName: str(fd, "portalName"),
+  });
+  if (!parsed.success) return { error: firstError(parsed.error) };
+  const d = parsed.data;
+  if ((d.clientSecret || d.refreshToken) && !encryptionAvailable()) return { error: NO_KEY_MSG };
+
+  invalidateConfig();
+  const [cfg, storedNow] = await Promise.all([getConfig(), loadStoredSettings()]);
+
+  // Configuración resultante = la actual + lo nuevo. Si queda completa, se prueba antes de guardar.
+  const candidate = {
+    ...cfg.zoho,
+    dc: d.dc,
+    clientId: d.clientId || undefined,
+    clientSecret: d.clientSecret || cfg.zoho.clientSecret,
+    refreshToken: d.refreshToken || cfg.zoho.refreshToken,
+    portalId: d.portalId || undefined,
+    portalName: d.portalName || undefined,
+  };
+  const complete = Boolean(candidate.clientId && candidate.clientSecret && candidate.refreshToken && candidate.portalId);
+  let note = "";
+  if (complete && fd.get("skipTest") !== "on") {
+    const r = await checkZoho(candidate);
+    if (!r.ok) return { error: `Zoho no respondió con esos datos: ${r.error}. No se guardó nada.` };
+    note = ` Conexión válida (${r.users} usuarios en el portal).`;
+  } else if (!complete) {
+    note = " Faltan campos para poder conectar con Zoho.";
+  }
+
+  const { saved, removed } = await applyChanges(
+    {
+      "zoho.dc": d.dc,
+      "zoho.clientId": d.clientId,
+      "zoho.clientSecret": d.clientSecret,
+      "zoho.refreshToken": d.refreshToken,
+      "zoho.portalId": d.portalId,
+      "zoho.portalName": d.portalName,
+    },
+    {
+      "zoho.dc": cfg.zoho.dc,
+      "zoho.clientId": cfg.zoho.clientId,
+      "zoho.portalId": cfg.zoho.portalId,
+      "zoho.portalName": cfg.zoho.portalName,
+    },
+    new Set(storedNow.values.keys()),
+    user.email,
+  );
+  await audit("settings.zoho", { detail: `guardó: ${saved.join(", ") || "—"}; quitó: ${removed.join(", ") || "—"}` });
+  revalidatePath("/settings");
+  return saved.length || removed.length ? { ok: `Guardado.${note}` } : { ok: `No había cambios que guardar.${note}` };
+}
+
+/** Borra lo guardado en la app para un grupo; vuelve a usarse lo que haya en variables de entorno. */
+export async function removeCredentialsAction(fd: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const group = str(fd, "group");
+  if (group !== "github" && group !== "zoho") return;
+  await removeSettings(GROUPS[group]);
+  invalidateConfig();
+  await audit(`settings.${group}.remove`, { userId: user.id, userEmail: user.email, detail: "quitó lo guardado en la app" });
+  revalidatePath("/settings");
 }

@@ -1,16 +1,21 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { getSyncStatus } from "@/lib/autosync";
 import { logoutAction } from "@/app/actions";
+import { SyncBar } from "@/components/sync-bar";
 
 const links = [
   { href: "/", label: "Resumen" },
+  { href: "/prs", label: "Pull requests" },
   { href: "/team", label: "Equipo" },
   { href: "/weekly", label: "Detalle semanal" },
+  { href: "/reports", label: "Reportes" },
   { href: "/settings", label: "Integraciones" },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
+  const syncStatus = await getSyncStatus();
   return (
     <>
       <header className="border-b border-slate-200 bg-white">
@@ -35,6 +40,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
+      <div className="border-b border-slate-100 bg-slate-50">
+        <div className="mx-auto flex max-w-6xl justify-end px-4 py-1.5">
+          <SyncBar initial={syncStatus} />
+        </div>
+      </div>
       <main className="mx-auto max-w-6xl space-y-6 px-4 py-6">{children}</main>
     </>
   );
