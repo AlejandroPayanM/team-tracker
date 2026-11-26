@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { env } from "@/lib/env";
 import { requireUser } from "@/lib/auth";
 import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
 import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
@@ -62,6 +64,13 @@ export default async function MemberPage({
             )}{" "}
             · Zoho: {m.zohoUserId ? "vinculado" : "sin vincular"} · desde {formatDate(m.startedAt)}
           </p>
+          {!m.archivedAt &&
+            ((env.githubConfigured && m.githubLogin && !m.githubSyncedAt) || (env.zohoConfigured && !m.zohoSyncedAt)) && (
+              <p className="mt-1 text-sm text-sky-700">
+                Su historial aún no se ha traído por completo. Se hará en la próxima sincronización, o ahora desde{" "}
+                <Link href="/settings" className="underline">Integraciones</Link>.
+              </p>
+            )}
         </div>
         {isAdmin &&
           (m.archivedAt ? (

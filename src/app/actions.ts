@@ -121,9 +121,10 @@ export async function createMemberAction(_prev: FormState, fd: FormData): Promis
     throw e;
   }
   await audit("member.create", { target: id, detail: `${d.name} <${d.email}> gh:${githubLogin ?? "-"}` });
-  // Trae su historial en segundo plano, sin bloquear la respuesta.
+  // Trae su historial en segundo plano. La persona nueva queda "pendiente" (sin cursor), así que
+  // aunque este intento se omita por otra sincronización en curso, la siguiente lo completa.
   after(async () => {
-    await syncAll({ full: true, trigger: "member-added" }).catch((e) => console.error("backfill failed", e));
+    await syncAll({ trigger: "member-added" }).catch((e) => console.error("backfill failed", e));
   });
   revalidatePath("/team");
   redirect(`/team/${id}`);
@@ -137,6 +138,8 @@ export async function updateMemberAction(_prev: FormState, fd: FormData): Promis
   const d = parsed.data;
   const before = await db.member.findUnique({ where: { id } });
   if (!before) return { error: "Compañero no encontrado." };
+  const githubChanged = before.githubLogin !== (d.githubLogin ?? null);
+  const zohoRelink = before.email !== d.email || before.zohoEmail !== (d.zohoEmail ?? null);
   try {
     await db.member.update({
       where: { id },
@@ -146,8 +149,9 @@ export async function updateMemberAction(_prev: FormState, fd: FormData): Promis
         githubLogin: d.githubLogin ?? null,
         zohoEmail: d.zohoEmail ?? null,
         position: d.position ?? null,
-        // Si cambia el correo o el correo de Zoho, se vuelve a ligar en la próxima sincronización.
-        ...(before.email !== d.email || before.zohoEmail !== (d.zohoEmail ?? null) ? { zohoUserId: null } : {}),
+        // Si cambia el usuario de GitHub o el correo, se vuelve a ligar y a traer su historial.
+        ...(githubChanged ? { githubSyncedAt: null } : {}),
+        ...(zohoRelink ? { zohoUserId: null, zohoSyncedAt: null } : {}),
       },
     });
   } catch (e) {
@@ -155,11 +159,10 @@ export async function updateMemberAction(_prev: FormState, fd: FormData): Promis
     if (msg) return { error: msg };
     throw e;
   }
-  const githubChanged = before.githubLogin !== (d.githubLogin ?? null);
   await audit("member.update", { target: id, detail: d.name });
-  if (githubChanged && d.githubLogin) {
+  if ((githubChanged && d.githubLogin) || zohoRelink) {
     after(async () => {
-      await syncAll({ full: true, trigger: "member-added" }).catch((e) => console.error("backfill failed", e));
+      await syncAll({ trigger: "member-updated" }).catch((e) => console.error("backfill failed", e));
     });
   }
   revalidatePath(`/team/${id}`);
@@ -179,8 +182,13 @@ export async function archiveMemberAction(fd: FormData): Promise<void> {
 export async function restoreMemberAction(fd: FormData): Promise<void> {
   await requireAdmin();
   const id = str(fd, "id");
-  const m = await db.member.update({ where: { id }, data: { archivedAt: null } });
+  // Mientras estuvo archivado no se sincronizó: Zoho vuelve a traer su historial y el cursor de
+  // GitHub (que quedó viejo) ya cubre el hueco con el periodo máximo configurado.
+  const m = await db.member.update({ where: { id }, data: { archivedAt: null, zohoSyncedAt: null } });
   await audit("member.restore", { target: id, detail: m.email });
+  after(async () => {
+    await syncAll({ trigger: "member-restored" }).catch((e) => console.error("backfill failed", e));
+  });
   revalidatePath("/", "layout");
   redirect(`/team/${id}`);
 }

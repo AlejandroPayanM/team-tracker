@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
+import { countPendingBackfill } from "@/lib/sync";
 import { parseRange, relativeDays, shortDate } from "@/lib/weeks";
 import { Badge, Bars, Card, Empty, RangeNav, Stat } from "@/components/ui";
 
@@ -21,6 +22,7 @@ export default async function Dashboard({
   const chartN = Math.max(MIN_CHART_WEEKS, weeks); // la gráfica da contexto si el rango es corto
   const total = Math.max(chartN, weeks * 2); // + el periodo previo, para comparar
 
+  const pendingBackfill = await countPendingBackfill();
   const [series, members, openPrs, lastRuns] = await Promise.all([
     weeklySeries(range.end, total),
     db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
@@ -49,6 +51,14 @@ export default async function Dashboard({
         <h1 className="text-xl font-semibold">Resumen del equipo</h1>
         <RangeNav base="/" range={range} />
       </div>
+
+      {pendingBackfill > 0 && (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          {pendingBackfill === 1 ? "1 compañero tiene" : `${pendingBackfill} compañeros tienen`} su historial pendiente de traer, por
+          eso quizá falten datos. Se completa en la próxima sincronización o ahora mismo desde{" "}
+          <Link href="/settings" className="font-medium underline">Integraciones</Link>.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="PRs abiertos (creados)" value={cur.prsOpened} prev={prev.prsOpened} />

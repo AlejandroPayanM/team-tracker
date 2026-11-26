@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
+import { env } from "@/lib/env";
 import { requireUser } from "@/lib/auth";
 import { Badge, Card, Empty } from "@/components/ui";
 import { MemberForm } from "@/components/forms";
@@ -50,8 +51,18 @@ export default async function TeamPage() {
                     <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
                   </td>
                   <td className="td">{m.email}</td>
-                  <td className="td">{m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}</td>
-                  <td className="td">{m.zohoUserId ? <Badge tone="green">vinculado</Badge> : <Badge tone="gray">pendiente</Badge>}</td>
+                  <td className="td">
+                    {m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}
+                    {m.githubLogin && env.githubConfigured && !m.githubSyncedAt && (
+                      <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
+                    )}
+                  </td>
+                  <td className="td">
+                    {m.zohoUserId ? <Badge tone="green">vinculado</Badge> : <Badge tone="gray">pendiente</Badge>}
+                    {env.zohoConfigured && !m.zohoSyncedAt && (
+                      <div className="mt-0.5"><Badge tone="blue">historial pendiente</Badge></div>
+                    )}
+                  </td>
                   <td className="td">{m.position ?? "—"}</td>
                   <td className="td">{formatDate(m.startedAt)}</td>
                 </tr>

@@ -31,7 +31,13 @@ async function runTracked(
     data: { status: "ERROR", error: "Interrumpida (tiempo agotado)", finishedAt: new Date() },
   });
   const running = await db.syncRun.findFirst({ where: { source, status: "RUNNING" } });
-  if (running) return { source, status: "SKIPPED", items: 0, message: "Ya hay una sincronización en curso" };
+  if (running) {
+    // Se deja constancia del intento omitido. Nada se pierde: los cursores por persona
+    // hacen que la siguiente sincronización complete lo pendiente.
+    const message = "Ya había una sincronización en curso; este intento se omitió";
+    await db.syncRun.create({ data: { source, trigger, status: "SKIPPED", error: message, finishedAt: new Date() } });
+    return { source, status: "SKIPPED", items: 0, message };
+  }
 
   const run = await db.syncRun.create({ data: { source, trigger, status: "RUNNING" } });
   try {
@@ -58,10 +64,13 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
   }
   return runTracked("GITHUB", opts.trigger, async () => {
     const warnings: string[] = [];
-    const since = (await sinceDate("GITHUB", opts.full)).toISOString().slice(0, 10);
+    const startedAt = new Date(); // el cursor de cada persona avanza hasta aquí, no hasta que termine la corrida
+    const lookback = new Date(startedAt.getTime() - env.syncLookbackDays * DAY);
     const org = env.githubOrg ? ` org:${env.githubOrg}` : "";
 
-    const all = await db.member.findMany({ select: { id: true, githubLogin: true, email: true, archivedAt: true } });
+    const all = await db.member.findMany({
+      select: { id: true, githubLogin: true, email: true, archivedAt: true, githubSyncedAt: true },
+    });
     const byLogin = new Map<string, string>();
     for (const m of all) if (m.githubLogin) byLogin.set(m.githubLogin, m.id);
 
@@ -85,21 +94,32 @@ export function syncGithub(opts: SyncOpts): Promise<SyncOutcome> {
     let items = 0;
     for (const m of all.filter((x) => x.githubLogin && !x.archivedAt)) {
       const login = m.githubLogin!;
+      // Sin cursor (persona nueva, restaurada o con usuario cambiado) o sync completa: todo el periodo.
+      // Con cursor: desde ahí, con 1 día de traslape para no perder cambios en el borde.
+      const from =
+        opts.full || !m.githubSyncedAt
+          ? lookback
+          : new Date(Math.max(m.githubSyncedAt.getTime() - DAY, lookback.getTime()));
+      const since = from.toISOString().slice(0, 10);
       const queries = [
         `is:pr author:${login}${org} updated:>=${since}`,
         `is:pr reviewed-by:${login} -author:${login}${org} updated:>=${since}`,
       ];
+      let failed = false;
       for (const q of queries) {
         try {
           for await (const { pr, total } of searchPullRequests(q)) {
             await upsertPr(pr, byLogin);
             items++;
-            if (total > 1000 && items === 1) warnings.push(`Más de 1000 resultados para ${login}: reduce SYNC_LOOKBACK_DAYS`);
+            if (total > 1000) warnings.push(`Más de 1000 resultados para ${login}: reduce SYNC_LOOKBACK_DAYS`);
           }
         } catch (e) {
+          failed = true;
           warnings.push(`${login}: ${e instanceof Error ? e.message : e}`);
         }
       }
+      // Si algo falló, el cursor no avanza y la próxima corrida reintenta desde el mismo punto.
+      if (!failed) await db.member.update({ where: { id: m.id }, data: { githubSyncedAt: startedAt } });
     }
 
     // 3) Reasignar PRs/reviews históricos de miembros agregados después.
@@ -167,9 +187,13 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
   }
   return runTracked("ZOHO", opts.trigger, async () => {
     const warnings: string[] = [];
-    const sinceMs = (await sinceDate("ZOHO", opts.full)).getTime();
+    const startedAt = new Date();
+    const sinceMs = (await sinceDate("ZOHO", false)).getTime();
 
     const members = await db.member.findMany();
+    // Las tareas se consultan por proyecto, no por persona: si alguien activo no tiene su historial
+    // de Zoho, esta corrida trae todas las tareas (una sola vez); si no, solo las modificadas.
+    const fetchAll = opts.full || members.some((m) => !m.archivedAt && !m.zohoSyncedAt);
     const zUsers = await listZohoUsers();
     const idByEmail = new Map(zUsers.map((u) => [u.email, u.id]));
 
@@ -190,9 +214,10 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
     // 2) Tareas por proyecto; solo se guardan las que tienen al menos un miembro como responsable.
     let items = 0;
     const projects = await listZohoProjects();
+    let projectFailed = false;
     for (const p of projects) {
       try {
-        for await (const t of listZohoTasks(p.id, opts.full ? undefined : sinceMs)) {
+        for await (const t of listZohoTasks(p.id, fetchAll ? undefined : sinceMs)) {
           const ids = new Set<string>();
           for (const o of t.owners) {
             const id =
@@ -229,11 +254,25 @@ export function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
           items++;
         }
       } catch (e) {
+        projectFailed = true;
         warnings.push(`Proyecto ${p.name}: ${e instanceof Error ? e.message : e}`);
       }
     }
+    // Solo si ningún proyecto falló se da por traído el historial.
+    if (!projectFailed) {
+      await db.member.updateMany({ where: { archivedAt: null }, data: { zohoSyncedAt: startedAt } });
+    }
     return { items, warnings };
   });
+}
+
+/** Cuántos compañeros activos todavía no tienen su historial traído (solo cuenta fuentes configuradas). */
+export async function countPendingBackfill(): Promise<number> {
+  const pending = [];
+  if (env.githubConfigured) pending.push({ githubLogin: { not: null }, githubSyncedAt: null });
+  if (env.zohoConfigured) pending.push({ zohoSyncedAt: null });
+  if (!pending.length) return 0;
+  return db.member.count({ where: { archivedAt: null, OR: pending } });
 }
 
 export async function syncAll(opts: SyncOpts): Promise<SyncOutcome[]> {

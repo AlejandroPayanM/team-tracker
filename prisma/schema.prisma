@@ -62,6 +62,11 @@ model Member {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  // Cursores de sincronización por persona. null = todavía falta traer su historial completo;
+  // la siguiente sincronización lo hace sola. Se reinician al cambiar su usuario/correo o restaurarlo.
+  githubSyncedAt DateTime?
+  zohoSyncedAt   DateTime?
+
   pullRequests PullRequest[]
   reviews      PrReview[]
   zohoTasks    ZohoTask[]
