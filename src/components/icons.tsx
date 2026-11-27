@@ -68,6 +68,18 @@ const PATHS = {
       <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
     </>
   ),
+  board: (
+    <>
+      <rect x="3" y="3" width="5" height="18" rx="1.5" />
+      <rect x="10" y="3" width="5" height="12" rx="1.5" />
+      <rect x="17" y="3" width="4" height="8" rx="1.5" />
+    </>
+  ),
+  leaders: (
+    <>
+      <path d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
+    </>
+  ),
   chevron: <path d="m6 9 6 6 6-6" />,
   left: <path d="m15 18-6-6 6-6" />,
   right: <path d="m9 18 6-6-6-6" />,

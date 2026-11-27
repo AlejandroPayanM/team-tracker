@@ -63,14 +63,18 @@ export async function weeklySeries(
   weeks: number,
   memberId?: string,
   repo?: string,
+  /** Alcance por equipos: solo cuentan estas personas. Sin esto (y sin memberId) cuenta a todas: úsalo siempre en pantallas. */
+  memberIds?: string[],
 ): Promise<Series> {
   const first = addWeeks(lastWeekStart, -(weeks - 1));
   const end = addWeeks(lastWeekStart, 1);
   const weekStarts = Array.from({ length: weeks }, (_, i) => addWeeks(first, i));
   const range = { gte: first, lt: end };
-  const who = memberId ? { memberId } : { memberId: { not: null } };
+  const who = memberId ? { memberId } : memberIds ? { memberId: { in: memberIds } } : { memberId: { not: null } };
   const inRepo = repo ? { repo } : {};
-  const taskWho = { members: memberId ? { some: { id: memberId } } : { some: {} } };
+  const taskWho = {
+    members: memberId ? { some: { id: memberId } } : memberIds ? { some: { id: { in: memberIds } } } : { some: {} },
+  };
   type TaskRow = { completedAt: Date | null; updatedAtZ: Date | null; members: { id: string }[] };
   const noTasks = Promise.resolve<TaskRow[]>([]);
 

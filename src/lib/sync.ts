@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "./db";
 import { env } from "./env";
 import { getConfig } from "./config";
@@ -386,13 +387,13 @@ export async function syncZoho(opts: SyncOpts): Promise<SyncOutcome> {
 }
 
 /** Cuántos compañeros activos todavía no tienen su historial traído (solo cuenta fuentes configuradas). */
-export async function countPendingBackfill(): Promise<number> {
+export async function countPendingBackfill(scope: Prisma.MemberWhereInput = {}): Promise<number> {
   const cfg = await getConfig();
   const pending = [];
   if (cfg.githubConfigured) pending.push({ githubLogin: { not: null }, githubSyncedAt: null });
   if (cfg.zohoConfigured) pending.push({ zohoSyncedAt: null });
   if (!pending.length) return 0;
-  return db.member.count({ where: { archivedAt: null, OR: pending } });
+  return db.member.count({ where: { AND: [scope, { archivedAt: null, OR: pending }] } });
 }
 
 /** GitHub y Zoho en paralelo: son fuentes independientes y cada una lleva su propio control de concurrencia. */

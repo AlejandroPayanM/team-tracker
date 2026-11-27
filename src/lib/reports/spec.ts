@@ -30,7 +30,7 @@ export const DEFAULT_METRICS: MetricKey[] = [
   "tasksCompleted",
 ];
 
-export const GROUPS = { person: "Persona", repo: "Repositorio", week: "Semana", detail: "Detalle de PRs" } as const;
+export const GROUPS = { person: "Persona", team: "Equipo", repo: "Repositorio", week: "Semana", detail: "Detalle de PRs" } as const;
 export type GroupBy = keyof typeof GROUPS;
 
 export const CHART_TYPES = {
@@ -42,7 +42,7 @@ export const CHART_TYPES = {
 } as const;
 export type ChartType = keyof typeof CHART_TYPES;
 
-export const CHART_DIMS = { person: "Persona", repo: "Repositorio", week: "Semana" } as const;
+export const CHART_DIMS = { person: "Persona", team: "Equipo", repo: "Repositorio", week: "Semana" } as const;
 export type ChartDim = keyof typeof CHART_DIMS;
 
 export type ReportSpec = {
@@ -74,14 +74,14 @@ export function parseSpec(raw: Raw): ReportSpec {
   const range = parseRange({ from: first(raw.from), to: first(raw.to) });
   const members = [...new Set(arr(raw.members).filter((m) => ID_RE.test(m)))].slice(0, 200);
   const repos = [...new Set(arr(raw.repos).filter((r) => REPO_RE.test(r)))].slice(0, 200);
-  const group = z.enum(["person", "repo", "week", "detail"]).catch("person").parse(first(raw.group));
+  const group = z.enum(["person", "team", "repo", "week", "detail"]).catch("person").parse(first(raw.group));
 
   const metricList = arr(raw.m).filter((k): k is MetricKey => k in METRICS);
   const metrics = metricList.length ? [...new Set(metricList)] : raw.m === undefined ? DEFAULT_METRICS : [];
   const ordered = METRIC_KEYS.filter((k) => metrics.includes(k)); // orden fijo del catálogo
 
   const type = z.enum(["none", "bar", "hbar", "line", "pie"]).catch(DEFAULT_CHART.type).parse(first(raw.ct));
-  const by = z.enum(["person", "repo", "week"]).catch(DEFAULT_CHART.by).parse(first(raw.cb));
+  const by = z.enum(["person", "team", "repo", "week"]).catch(DEFAULT_CHART.by).parse(first(raw.cb));
   const cm = first(raw.cm);
   const metric = cm && cm in METRICS ? (cm as MetricKey) : DEFAULT_CHART.metric;
   const top = Math.min(25, Math.max(3, Number.parseInt(first(raw.top) ?? "", 10) || DEFAULT_CHART.top));

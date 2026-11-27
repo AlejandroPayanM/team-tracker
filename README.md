@@ -43,9 +43,31 @@ Si cambias `prisma/schema.prisma`, genera una migración con `npm run local db:m
 
 Entra, ve a **Equipo → Agregar compañero** y luego a **Integraciones → Sincronizar ahora**.
 
-Roles: `ADMIN` (agrega/quita compañeros, notas, sincroniza) y `VIEWER` (solo lectura).
 Crea más usuarios con el mismo comando `user:create` (volver a ejecutarlo para un correo existente cambia su contraseña
-y cierra sus sesiones).
+y cierra sus sesiones), o —más cómodo— desde **Administración** dentro de la app.
+
+## Equipos (células) y roles
+
+Cada persona pertenece a **un solo equipo** (o a ninguno). Los equipos y los usuarios se administran en **Administración**
+(solo `ADMIN`): crear/renombrar/eliminar equipos y crear usuarios con una contraseña temporal aleatoria que se muestra una
+sola vez y que la persona debe cambiar al entrar.
+
+| Rol | Qué ve | Qué puede hacer |
+| --- | --- | --- |
+| `ADMIN` (Administrador) | Todos los equipos; elige uno, «Sin equipo» o la vista general con el selector de la barra superior | Todo: equipos, usuarios, integraciones, sincronización, borrar personas |
+| `MANAGER` (Líder de equipo) | Solo los equipos que tenga asignados | Agregar/editar/archivar personas y notas de **sus** equipos |
+| `VIEWER` (Solo lectura) | Solo los equipos que tenga asignados | Nada (solo consultar) |
+
+**Equipos** (`/teams`, para administradores y líderes) es un tablero: arrastra a las personas entre columnas, o usa «+ Agregar»,
+«⇄» (mover, funciona en celular) y «✕» (quitar del equipo, solo admin). Los cambios se ven al instante y se confirman en el
+servidor. Un líder solo mueve personas entre sus propios equipos. El admin designa al **líder** de cada equipo (debe tener acceso
+a él). Un **líder de líderes** es simplemente un líder con varios equipos asignados: en **Líderes** ve, por cada líder, cómo le fue
+a su equipo (PRs, merges, reviews, tareas y personas sin actividad) frente al periodo previo.
+
+El alcance se aplica en servidor a todo: resumen, PRs, detalle semanal, perfiles, reportes y exportaciones. El equipo elegido
+en el selector se guarda en una cookie, pero nunca se confía en ella: se valida contra los equipos permitidos en cada
+petición. Quien no tiene acceso a una persona recibe un 404, igual que si no existiera. En los reportes puedes agrupar por **Equipo**.
+Un líder sin equipos asignados no ve nada hasta que un administrador se los asigne.
 
 ## Cómo se liga cada persona
 
@@ -144,7 +166,7 @@ a los 5 min), lo que consume horas de cómputo del plan: unas 8 h de uso al día
 
 - Contraseñas con bcrypt (costo 12); sesiones en BD con token aleatorio (solo se guarda su hash SHA-256), cookie `HttpOnly`, `SameSite=Lax`, `Secure` y prefijo `__Host-` en producción, vigencia 7 días.
 - Límite de intentos de login (5 por correo / 15 min, bloqueo temporal de cuenta) y mismo mensaje de error exista o no el correo.
-- Toda página y acción exige sesión (middleware + verificación en BD) y rol; mutaciones solo para `ADMIN`.
+- Toda página y acción exige sesión (middleware + verificación en BD) , rol y equipo; las mutaciones solo las hacen `ADMIN` y `MANAGER` (este último solo dentro de sus equipos).
 - Validación de entradas con zod; consultas parametrizadas (Prisma); sin HTML crudo (React escapa todo).
 - Cabeceras: CSP, `X-Frame-Options: DENY`, `nosniff`, HSTS en producción, etc. Las Server Actions de Next verifican el origen (CSRF).
 - Los tokens de GitHub/Zoho viven solo en variables de entorno, nunca en la BD ni en el navegador.

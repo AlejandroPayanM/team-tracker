@@ -6,17 +6,42 @@ import { useEffect, useRef, useState } from "react";
 import { logoutAction } from "@/app/actions";
 import { Icon, type IconName } from "@/components/icons";
 import { SyncBar, type SyncStatus } from "@/components/sync-bar";
+import { TeamSwitcher, type TeamSwitcherProps } from "@/components/team-switcher";
 
-const LINKS: { href: string; label: string; icon: IconName }[] = [
+type NavLink = { href: string; label: string; icon: IconName; only?: "admin" | "manage" | "leaders" };
+
+const LINKS: NavLink[] = [
   { href: "/", label: "Resumen", icon: "dashboard" },
   { href: "/prs", label: "Pull requests", icon: "pr" },
-  { href: "/team", label: "Equipo", icon: "team" },
+  { href: "/team", label: "Personas", icon: "team" },
+  { href: "/teams", label: "Equipos", icon: "board", only: "manage" },
+  { href: "/leaders", label: "Líderes", icon: "leaders", only: "leaders" },
   { href: "/weekly", label: "Detalle semanal", icon: "week" },
   { href: "/reports", label: "Reportes", icon: "report" },
-  { href: "/settings", label: "Integraciones", icon: "plug" },
+  { href: "/settings", label: "Integraciones", icon: "plug", only: "admin" },
+  { href: "/admin", label: "Usuarios", icon: "sliders", only: "admin" },
 ];
 
-export type ShellUser = { name: string; email: string; role: "ADMIN" | "VIEWER" };
+export type ShellUser = {
+  name: string;
+  email: string;
+  role: "ADMIN" | "MANAGER" | "VIEWER";
+  roleLabel: string;
+  mustChangePassword: boolean;
+  /** Tiene varios equipos (o es admin con equipos): ve la pantalla de líderes. */
+  showLeaders: boolean;
+};
+
+const visibleLinks = (user: ShellUser) =>
+  user.mustChangePassword
+    ? []
+    : LINKS.filter(
+        (l) =>
+          !l.only ||
+          (l.only === "admin" && user.role === "ADMIN") ||
+          (l.only === "manage" && user.role !== "VIEWER") ||
+          (l.only === "leaders" && user.showLeaders),
+      );
 
 const isActive = (pathname: string, href: string) => (href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`));
 
@@ -42,7 +67,7 @@ function SidebarBody({ pathname, user, onClose }: { pathname: string; user: Shel
     <>
       <Brand onClose={onClose} />
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2" aria-label="Principal">
-        {LINKS.map((l) => {
+        {visibleLinks(user).map((l) => {
           const active = isActive(pathname, l.href);
           return (
             <Link
@@ -70,7 +95,7 @@ function SidebarBody({ pathname, user, onClose }: { pathname: string; user: Shel
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-indigo-500/30 text-xs font-semibold text-indigo-100">{initial}</span>
           <span className="min-w-0">
             <span className="block truncate font-medium leading-tight">{user.name}</span>
-            <span className="block truncate text-xs text-slate-400">{user.role === "ADMIN" ? "Administrador" : "Solo lectura"}</span>
+            <span className="block truncate text-xs text-slate-400">{user.roleLabel}</span>
           </span>
         </Link>
         <form action={logoutAction}>
@@ -88,7 +113,17 @@ function SidebarBody({ pathname, user, onClose }: { pathname: string; user: Shel
  * Estructura de toda la app: barra lateral fija en escritorio (≥ 1024 px) y cajón deslizable en celular y tablet.
  * La barra superior queda fija y lleva el estado de sincronización.
  */
-export function AppShell({ user, syncStatus, children }: { user: ShellUser; syncStatus: SyncStatus; children: React.ReactNode }) {
+export function AppShell({
+  user,
+  syncStatus,
+  teamSwitcher,
+  children,
+}: {
+  user: ShellUser;
+  syncStatus: SyncStatus;
+  teamSwitcher: TeamSwitcherProps | null;
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
@@ -116,7 +151,7 @@ export function AppShell({ user, syncStatus, children }: { user: ShellUser; sync
     }
   }, [open]);
 
-  const current = LINKS.find((l) => isActive(pathname, l.href))?.label ?? (pathname.startsWith("/account") ? "Mi cuenta" : "Team Tracker");
+  const current = visibleLinks(user).find((l) => isActive(pathname, l.href))?.label ?? (pathname.startsWith("/account") ? "Mi cuenta" : "Team Tracker");
 
   return (
     <div className="min-h-screen">
@@ -155,8 +190,13 @@ export function AppShell({ user, syncStatus, children }: { user: ShellUser; sync
             <Icon name="menu" />
           </button>
           <span className="truncate text-sm font-semibold text-slate-800 lg:hidden">{current}</span>
-          <div className="ml-auto shrink-0">
-            <SyncBar initial={syncStatus} />
+          <div className="ml-auto flex min-w-0 shrink items-center gap-2">
+            {teamSwitcher && <TeamSwitcher {...teamSwitcher} />}
+            {!user.mustChangePassword && (
+              <div className="shrink-0">
+                <SyncBar initial={syncStatus} />
+              </div>
+            )}
           </div>
         </header>
         <main id="contenido" className="mx-auto w-full max-w-6xl space-y-6 px-4 py-5 sm:px-6 sm:py-8">

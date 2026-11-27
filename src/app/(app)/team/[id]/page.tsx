@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
 import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
@@ -22,15 +22,17 @@ export default async function MemberPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
-  const user = await requireUser();
-  const isAdmin = user.role === "ADMIN";
+  const scope = await getScope();
+  const isAdmin = scope.isAdmin;
+  const canEdit = scope.canManage;
   const { id } = await params;
   const sp = await searchParams;
   const range = parseRange(sp);
   const repo = parseRepo(sp.repo);
   const chartN = Math.max(MIN_CHART_WEEKS, range.weeks);
-  const m = await db.member.findUnique({ where: { id } });
-  if (!m) notFound();
+  const m = await db.member.findUnique({ where: { id }, include: { team: { select: { name: true } } } });
+  // Sin acceso se responde igual que si no existiera, para no revelar quién hay en otros equipos.
+  if (!m || !scope.canAccessTeam(m.teamId)) notFound();
   const cfg = await getConfig();
 
   const [series, prs, openTasks, doneTasks, notes, totalPrs, totalMerged, totalReviews, repos] = await Promise.all([
@@ -46,7 +48,7 @@ export default async function MemberPage({
     db.pullRequest.count({ where: { memberId: id } }),
     db.pullRequest.count({ where: { memberId: id, state: "MERGED" } }),
     db.prReview.count({ where: { memberId: id } }),
-    listRepos(),
+    listRepos([id]),
   ]);
 
   const weeks = series.byMember.get(id) ?? Array.from({ length: chartN }, emptyStats);
@@ -60,12 +62,13 @@ export default async function MemberPage({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/team" className="text-xs font-medium text-slate-500 hover:text-slate-800">← Equipo</Link>
+            <Link href="/team" className="text-xs font-medium text-slate-500 hover:text-slate-800">← Personas</Link>
           </div>
           <h1 className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
             {m.name} {m.archivedAt && <Badge tone="gray">Archivado</Badge>}
           </h1>
           <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
+            {m.team && <dd className="font-medium text-slate-700">{m.team.name}</dd>}
             {m.position && <dd>{m.position}</dd>}
             <dd className="break-all">{m.email}</dd>
             <dd>
@@ -83,12 +86,15 @@ export default async function MemberPage({
           {!m.archivedAt &&
             ((cfg.githubConfigured && m.githubLogin && !m.githubSyncedAt) || (cfg.zohoConfigured && !m.zohoSyncedAt)) && (
               <p className="mt-2 text-sm text-sky-700">
-                Su historial aún no se ha traído por completo. Se hará en la próxima sincronización, o ahora desde{" "}
-                <Link href="/settings" className="underline">Integraciones</Link>.
+                Su historial aún no se ha traído por completo. Se hará en la próxima sincronización{isAdmin && (
+                  <>
+                    , o ahora desde <Link href="/settings" className="underline">Integraciones</Link>
+                  </>
+                )}.
               </p>
             )}
         </div>
-        {isAdmin &&
+        {canEdit &&
           (m.archivedAt ? (
             <form action={restoreMemberAction} className="shrink-0">
               <input type="hidden" name="id" value={m.id} />
@@ -143,7 +149,7 @@ export default async function MemberPage({
       </div>
 
       <Card title={`Seguimiento${pendingActions.length ? ` · ${pendingActions.length} pendiente(s)` : ""}`}>
-        {isAdmin && <NoteForm memberId={m.id} />}
+        {canEdit && <NoteForm memberId={m.id} />}
         {notes.length === 0 ? (
           <Empty>Sin notas todavía.</Empty>
         ) : (
@@ -154,7 +160,7 @@ export default async function MemberPage({
                   <form action={toggleNoteAction}>
                     <input type="hidden" name="id" value={n.id} />
                     <button
-                      disabled={!isAdmin}
+                      disabled={!canEdit}
                       className={`grid h-7 w-7 place-items-center rounded-md border-2 text-sm font-bold leading-none transition ${
                         n.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 bg-white text-transparent hover:border-indigo-400"
                       }`}
@@ -174,7 +180,7 @@ export default async function MemberPage({
                     {n.dueDate && !n.done && n.dueDate < new Date() && <span className="ml-1 text-red-600">vencido</span>}
                   </p>
                 </div>
-                {isAdmin && (
+                {canEdit && (
                   <form action={deleteNoteAction}>
                     <input type="hidden" name="id" value={n.id} />
                     <SubmitButton className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600" confirm="¿Borrar esta nota?">
@@ -268,14 +274,14 @@ export default async function MemberPage({
         )}
       </Card>
 
-      {isAdmin && (
+      {canEdit && (
         <details className="group rounded-xl border border-slate-200 bg-white shadow-xs">
           <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 text-sm font-semibold text-slate-800 sm:px-5 [&::-webkit-details-marker]:hidden">
             Editar datos
             <Icon name="chevron" className="ml-auto h-4 w-4 text-slate-400 transition group-open:rotate-180" />
           </summary>
           <div className="border-t border-slate-100 p-4 sm:p-5">
-            <MemberForm member={m} />
+            <MemberForm member={m} teams={scope.teams} allowNoTeam={isAdmin} />
           </div>
         </details>
       )}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { audit } from "@/lib/audit";
+import { scopeFor } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { sameOrigin } from "@/lib/http";
 import { buildReport } from "@/lib/reports/build";
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return NextResponse.json({ error: "origen no permitido" }, { status: 403 });
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "no autenticado" }, { status: 401 });
+  if (user.mustChangePassword) return NextResponse.json({ error: "cambia tu contraseña primero" }, { status: 403 });
   if (!(req.headers.get("content-type") ?? "").includes("application/json")) {
     return NextResponse.json({ error: "se espera JSON" }, { status: 415 });
   }
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
 
   // Todo se recalcula en el servidor a partir de los filtros: lo único que viene del navegador es la imagen.
   const spec = parseSpec(queryToRaw(query));
-  const report = await buildReport(spec);
+  const report = await buildReport(spec, (await scopeFor(user)).where);
   const png = report.chart ? decodeChartPng(chartPng) : null;
 
   const file = format === "xlsx" ? await buildXlsx(report, png) : await buildPdf(report, png);

@@ -33,13 +33,13 @@ function askHidden(prompt: string): Promise<string> {
 async function main() {
   const [emailArg, nameArg, roleArg] = process.argv.slice(2);
   if (!emailArg || !nameArg) {
-    console.error('Uso: npm run user:create -- correo@empresa.com "Nombre" [ADMIN|VIEWER]');
+    console.error('Uso: npm run user:create -- correo@empresa.com "Nombre" [ADMIN|MANAGER|VIEWER]');
     process.exit(1);
   }
   const email = emailArg.trim().toLowerCase();
   const role = (roleArg ?? "VIEWER").toUpperCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Correo inválido");
-  if (role !== "ADMIN" && role !== "VIEWER") throw new Error("Rol debe ser ADMIN o VIEWER");
+  if (role !== "ADMIN" && role !== "MANAGER" && role !== "VIEWER") throw new Error("Rol debe ser ADMIN, MANAGER o VIEWER (los equipos se asignan desde Administración)");
 
   // Modo no interactivo: NEW_USER_PASSWORD en el entorno (para cuentas nuevas con contraseña temporal).
   // En ese modo NO se sobrescribe una cuenta existente, salvo que pases --reset.

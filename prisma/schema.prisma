@@ -15,12 +15,33 @@ model User {
   email        String    @unique
   name         String
   passwordHash String
-  role         String    @default("VIEWER") // ADMIN | VIEWER
+  // ADMIN: ve y administra todo (todos los equipos, integraciones, usuarios).
+  // MANAGER ("Líder de equipo"): ve y administra solo los equipos que tiene asignados.
+  // VIEWER: solo lectura de los equipos que tiene asignados.
+  role         String    @default("VIEWER") // ADMIN | MANAGER | VIEWER
+  // true cuando un admin creó la cuenta o restableció la contraseña: debe cambiarla antes de usar la app.
+  mustChangePassword Boolean @default(false)
   failedLogins Int       @default(0)
   lockedUntil  DateTime?
   createdAt    DateTime  @default(now())
   sessions     Session[]
   notes        MemberNote[]
+  teams        Team[] @relation("TeamToUser") // equipos a los que tiene acceso (los ADMIN ven todos sin necesitar asignación)
+  ledTeams     Team[] @relation("TeamLeader") // equipos que dirige (un "líder de líderes" ve a los líderes de sus equipos)
+}
+
+// ───────── Equipos / células ─────────
+model Team {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  members   Member[]
+  users     User[]   @relation("TeamToUser")
+  // Líder designado del equipo (debe tener acceso a él). Permite ver "quién dirige qué" y cómo le va a cada líder.
+  leaderId  String?
+  leader    User?    @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+
+  @@index([leaderId])
 }
 
 model Session {
@@ -67,10 +88,16 @@ model Member {
   githubSyncedAt DateTime?
   zohoSyncedAt   DateTime?
 
+  // Una persona pertenece a un solo equipo (o a ninguno). Al borrar el equipo queda "sin equipo".
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
   pullRequests PullRequest[]
   reviews      PrReview[]
   zohoTasks    ZohoTask[]
   notes        MemberNote[]
+
+  @@index([teamId])
 }
 
 model PullRequest {

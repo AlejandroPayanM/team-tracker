@@ -8,10 +8,11 @@ export function parseRepo(raw?: string | null): string | undefined {
   return v && REPO_RE.test(v) ? v : undefined;
 }
 
-/** Repositorios donde el equipo ha creado PRs o hecho reviews, en orden alfabético. */
-export async function listRepos(): Promise<string[]> {
+/** Repositorios donde las personas indicadas han creado PRs o hecho reviews, en orden alfabético. */
+export async function listRepos(memberIds: string[]): Promise<string[]> {
+  if (!memberIds.length) return [];
   const rows = await db.pullRequest.findMany({
-    where: { OR: [{ memberId: { not: null } }, { reviews: { some: { memberId: { not: null } } } }] },
+    where: { OR: [{ memberId: { in: memberIds } }, { reviews: { some: { memberId: { in: memberIds } } } }] },
     distinct: ["repo"],
     select: { repo: true },
     orderBy: { repo: "asc" },

@@ -95,9 +95,21 @@ type MemberDefaults = {
   githubLogin?: string | null;
   zohoEmail?: string | null;
   position?: string | null;
+  teamId?: string | null;
 };
 
-export function MemberForm({ member }: { member?: MemberDefaults }) {
+export function MemberForm({
+  member,
+  teams = [],
+  defaultTeamId = "",
+  allowNoTeam = false,
+}: {
+  member?: MemberDefaults;
+  teams?: { id: string; name: string }[];
+  defaultTeamId?: string;
+  /** Solo un administrador puede dejar a alguien sin equipo. */
+  allowNoTeam?: boolean;
+}) {
   const [state, action] = useActionState(member?.id ? updateMemberAction : createMemberAction, initial);
   return (
     <form action={action} className="grid gap-3 sm:grid-cols-2">
@@ -118,6 +130,17 @@ export function MemberForm({ member }: { member?: MemberDefaults }) {
         Puesto <span className="font-normal text-slate-500">(opcional)</span>
         <input name="position" defaultValue={member?.position ?? ""} className="input mt-1" maxLength={100} />
       </label>
+      {(teams.length > 0 || allowNoTeam) && (
+        <label className="text-sm font-medium sm:col-span-2">
+          Equipo
+          <select name="teamId" className="input mt-1" defaultValue={member?.id ? (member.teamId ?? "") : defaultTeamId} required={!allowNoTeam}>
+            {allowNoTeam && <option value="">Sin equipo</option>}
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="text-sm font-medium sm:col-span-2">
         Correo en Zoho <span className="font-normal text-slate-500">(solo si es distinto al correo de arriba)</span>
         <input name="zohoEmail" type="email" defaultValue={member?.zohoEmail ?? ""} className="input mt-1" />

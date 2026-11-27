@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { WEEK_MS, addWeeks, formatDate, formatDateTime, formatRange, shortDate } from "../weeks";
 import { CHART_DIMS, GROUPS, METRICS, type ChartDim, type ChartType, type MetricKey, type ReportSpec } from "./spec";
@@ -28,7 +29,7 @@ const zeroFlow = (): Flow => ({
 });
 type Cell = Flow & { memberId: string; repo: string; w: number };
 type TaskEv = { members: string[]; w: number; completed: boolean; touched: boolean };
-type ScopeMember = { id: string; name: string; archived: boolean };
+type ScopeMember = { id: string; name: string; archived: boolean; teamId: string | null; teamName: string | null };
 
 export type Cube = {
   first: Date;
@@ -40,7 +41,11 @@ export type Cube = {
   scope: ScopeMember[];
 };
 
-export async function loadCube(spec: ReportSpec): Promise<Cube> {
+/**
+ * `memberWhere` es el alcance del usuario (equipos). Se combina con AND: aunque el reporte pida a una persona de otro
+ * equipo por id, no entra.
+ */
+export async function loadCube(spec: ReportSpec, memberWhere: Prisma.MemberWhereInput): Promise<Cube> {
   const { range } = spec;
   const first = range.start;
   const weeks = range.weeks;
@@ -48,11 +53,22 @@ export async function loadCube(spec: ReportSpec): Promise<Cube> {
   const inRange = { gte: first, lt: end };
 
   const scopeRows = await db.member.findMany({
-    where: spec.members.length ? { id: { in: spec.members } } : spec.includeArchived ? {} : { archivedAt: null },
-    select: { id: true, name: true, archivedAt: true },
+    where: {
+      AND: [
+        memberWhere,
+        spec.members.length ? { id: { in: spec.members } } : spec.includeArchived ? {} : { archivedAt: null },
+      ],
+    },
+    select: { id: true, name: true, archivedAt: true, team: { select: { id: true, name: true } } },
     orderBy: { name: "asc" },
   });
-  const scope: ScopeMember[] = scopeRows.map((m) => ({ id: m.id, name: m.name, archived: !!m.archivedAt }));
+  const scope: ScopeMember[] = scopeRows.map((m) => ({
+    id: m.id,
+    name: m.name,
+    archived: !!m.archivedAt,
+    teamId: m.team?.id ?? null,
+    teamName: m.team?.name ?? null,
+  }));
   const ids = scope.map((m) => m.id);
   const zohoApplies = spec.repos.length === 0;
   if (!ids.length) return { first, weeks, cells: [], tasks: [], zohoApplies, scope };
@@ -180,10 +196,20 @@ export function groupCube(cube: Cube, dim: ChartDim | "total"): Map<string, Metr
     if (!g) acc.set(k, (g = { flow: zeroFlow(), completed: 0, touched: 0 }));
     return g;
   };
+  const teamOf = new Map(cube.scope.map((m) => [m.id, m.teamId ?? "none"]));
   const key = (c: { memberId: string; repo: string; w: number }) =>
-    dim === "person" ? c.memberId : dim === "repo" ? c.repo : dim === "week" ? String(c.w) : "all";
+    dim === "person"
+      ? c.memberId
+      : dim === "repo"
+        ? c.repo
+        : dim === "team"
+          ? (teamOf.get(c.memberId) ?? "none")
+          : dim === "week"
+            ? String(c.w)
+            : "all";
 
   if (dim === "person") for (const m of cube.scope) get(m.id);
+  if (dim === "team") for (const m of cube.scope) get(m.teamId ?? "none");
   if (dim === "week") for (let w = 0; w < cube.weeks; w++) get(String(w));
   if (dim === "total") get("all");
 
@@ -203,7 +229,12 @@ export function groupCube(cube: Cube, dim: ChartDim | "total"): Map<string, Metr
   if (zoho) {
     for (const ev of cube.tasks) {
       if (!ev.members.length) continue;
-      const targets = dim === "person" ? ev.members : [dim === "week" ? String(ev.w) : "all"];
+      const targets =
+        dim === "person"
+          ? ev.members
+          : dim === "team"
+            ? [...new Set(ev.members.map((m) => teamOf.get(m) ?? "none"))] // una vez por equipo
+            : [dim === "week" ? String(ev.w) : "all"];
       for (const t of targets) {
         const g = get(t);
         if (ev.completed) g.completed++;
@@ -256,8 +287,10 @@ export function formatValue(kind: ColumnKind, v: string | number | Date | null):
 
 const STATE_LABEL: Record<string, string> = { MERGED: "Mergeado", OPEN: "Abierto", CLOSED: "Cerrado sin merge" };
 
-export async function buildReport(spec: ReportSpec): Promise<Report> {
-  const cube = await loadCube(spec);
+export async function buildReport(spec: ReportSpec, memberWhere: Prisma.MemberWhereInput): Promise<Report> {
+  const cube = await loadCube(spec, memberWhere);
+  const teamName = new Map<string, string>([["none", "Sin equipo"]]);
+  for (const m of cube.scope) if (m.teamId && m.teamName) teamName.set(m.teamId, m.teamName);
   const notes: string[] = [];
   const metricCols: ReportColumn[] = spec.metrics.map((k) => ({
     key: k,
@@ -267,7 +300,7 @@ export async function buildReport(spec: ReportSpec): Promise<Report> {
   }));
   const total = groupCube(cube, "total").get("all")!;
 
-  const dimLabel: Record<ChartDim, string> = { person: "Persona", repo: "Repositorio", week: "Semana" };
+  const dimLabel: Record<ChartDim, string> = { person: "Persona", repo: "Repositorio", week: "Semana", team: "Equipo" };
   let columns: ReportColumn[] = [];
   let rows: ReportRow[] = [];
   let totals: ReportRow | null = null;
@@ -341,6 +374,11 @@ export async function buildReport(spec: ReportSpec): Promise<Report> {
       rows = Array.from({ length: cube.weeks }, (_, w) =>
         make(formatRange(addWeeks(cube.first, w)), grouped.get(String(w))!),
       );
+    } else if (dim === "team") {
+      rows = [...grouped.entries()]
+        .map(([id, m]) => ({ name: teamName.get(id) ?? id, m }))
+        .sort((a, b) => (a.name === "Sin equipo" ? 1 : b.name === "Sin equipo" ? -1 : a.name.localeCompare(b.name)))
+        .map(({ name, m }) => make(name, m));
     } else {
       rows = [...grouped.entries()]
         .sort((a, b) => (b[1].prsOpened ?? 0) - (a[1].prsOpened ?? 0) || a[0].localeCompare(b[0]))
@@ -387,7 +425,10 @@ export async function buildReport(spec: ReportSpec): Promise<Report> {
       } else {
         const names = new Map(cube.scope.map((m) => [m.id, m.name]));
         entries = [...g.entries()]
-          .map(([k, m]) => ({ label: by === "person" ? (names.get(k) ?? k) : k, value: m[metric] ?? 0 }))
+          .map(([k, m]) => ({
+            label: by === "person" ? (names.get(k) ?? k) : by === "team" ? (teamName.get(k) ?? k) : k,
+            value: m[metric] ?? 0,
+          }))
           .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label))
           .slice(0, top);
       }

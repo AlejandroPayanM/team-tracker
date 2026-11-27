@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
 import { addWeeks, formatDate, parseRange } from "@/lib/weeks";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { Badge, Card, Empty, Notice, PageHeader, RangeNav, prBadge } from "@/components/ui";
@@ -12,7 +12,8 @@ export default async function WeeklyPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
-  await requireUser();
+  const scope = await getScope();
+  const ids = await scope.memberIds();
   const sp = await searchParams;
   const weekRange = parseRange(sp);
   const repo = parseRepo(sp.repo);
@@ -21,7 +22,7 @@ export default async function WeeklyPage({
 
   const [members, repos] = await Promise.all([
     db.member.findMany({
-      where: { archivedAt: null },
+      where: { AND: [scope.where, { archivedAt: null }] },
       orderBy: { name: "asc" },
       include: {
         pullRequests: {
@@ -39,7 +40,7 @@ export default async function WeeklyPage({
         },
       },
     }),
-    listRepos(),
+    listRepos(ids),
   ]);
 
   return (

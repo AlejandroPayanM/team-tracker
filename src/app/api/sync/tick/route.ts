@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return NextResponse.json({ error: "origen no permitido" }, { status: 403 });
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "no autenticado" }, { status: 401 });
+  if (user.mustChangePassword) return NextResponse.json({ error: "cambia tu contraseña primero" }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);

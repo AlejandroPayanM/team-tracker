@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { requireUser } from "@/lib/auth";
+import { requireAdminPage } from "@/lib/auth";
 import { settingsOverview, type SettingKey, type SettingView } from "@/lib/settings";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { IntegrationPanel } from "@/components/forms";
@@ -14,8 +14,8 @@ const STATUS_TONE = { OK: "green", WARNING: "amber", ERROR: "red" } as const;
 const STATUS_LABEL: Record<string, string> = { OK: "OK", WARNING: "CON AVISOS", ERROR: "ERROR", SKIPPED: "OMITIDA", RUNNING: "EN CURSO" };
 
 export default async function SettingsPage() {
-  const user = await requireUser();
-  const isAdmin = user.role === "ADMIN";
+  await requireAdminPage();
+  const isAdmin = true; // esta pantalla es solo para administradores
   const [runs, logs, cfg, overview] = await Promise.all([
     // Las corridas automáticas sin cambios no se listan (ocurren cada pocos minutos y taparían lo importante).
     db.syncRun.findMany({

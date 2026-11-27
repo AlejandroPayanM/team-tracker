@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { cache } from "react";
 import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
 
@@ -18,7 +18,21 @@ const LOCK_MS = 15 * 60 * 1000;
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-export type Role = "ADMIN" | "VIEWER";
+/** ADMIN: todo · MANAGER (líder de equipo): administra sus equipos · VIEWER: solo lectura de sus equipos. */
+export type Role = "ADMIN" | "MANAGER" | "VIEWER";
+
+export function parseRole(raw: string): Role {
+  return raw === "ADMIN" || raw === "MANAGER" ? raw : "VIEWER";
+}
+
+/** Puede crear/editar personas, notas y acuerdos (dentro de lo que su alcance le permita). */
+export const canManage = (role: Role) => role === "ADMIN" || role === "MANAGER";
+
+export const ROLE_LABEL: Record<Role, string> = {
+  ADMIN: "Administrador",
+  MANAGER: "Líder de equipo",
+  VIEWER: "Solo lectura",
+};
 
 export async function clientIp(): Promise<string> {
   if (process.env.TRUST_PROXY === "true") {
@@ -121,7 +135,7 @@ export async function revokeOtherSessions(userId: string): Promise<void> {
   });
 }
 
-export type CurrentUser = { id: string; email: string; name: string; role: Role };
+export type CurrentUser = { id: string; email: string; name: string; role: Role; mustChangePassword: boolean };
 
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -136,13 +150,23 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     return null;
   }
   const { user } = session;
-  return { id: user.id, email: user.email, name: user.name, role: user.role === "ADMIN" ? "ADMIN" : "VIEWER" };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: parseRole(user.role),
+    mustChangePassword: user.mustChangePassword,
+  };
 });
 
-/** Para páginas: redirige a /login si no hay sesión. */
-export async function requireUser(): Promise<CurrentUser> {
+/**
+ * Para páginas: redirige a /login si no hay sesión. Si la cuenta tiene una contraseña temporal (la creó o restableció un
+ * admin), la manda a /account hasta que la cambie; solo esa pantalla y su acción pasan `allowPasswordChange`.
+ */
+export async function requireUser(opts: { allowPasswordChange?: boolean } = {}): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.mustChangePassword && !opts.allowPasswordChange) redirect("/account");
   return user;
 }
 
@@ -150,5 +174,19 @@ export async function requireUser(): Promise<CurrentUser> {
 export async function requireAdmin(): Promise<CurrentUser> {
   const user = await requireUser();
   if (user.role !== "ADMIN") throw new Error("No tienes permisos para esta acción.");
+  return user;
+}
+
+/** Para páginas solo de ADMIN: a los demás les responde como si la ruta no existiera. */
+export async function requireAdminPage(): Promise<CurrentUser> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN") notFound();
+  return user;
+}
+
+/** Para acciones de ADMIN o líder de equipo (después hay que comprobar que la persona sea de su alcance). */
+export async function requireManager(): Promise<CurrentUser> {
+  const user = await requireUser();
+  if (!canManage(user.role)) throw new Error("No tienes permisos para esta acción.");
   return user;
 }

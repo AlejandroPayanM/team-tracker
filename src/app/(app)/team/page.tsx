@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
 import { Badge, Card, Empty, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { MemberForm, SubmitButton } from "@/components/forms";
@@ -12,19 +12,22 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // las acciones de sincronización corren en esta ruta
 
 export default async function TeamPage() {
-  const user = await requireUser();
-  const isAdmin = user.role === "ADMIN";
+  const scope = await getScope();
+  const canEdit = scope.canManage;
   const cfg = await getConfig();
   const [active, archived] = await Promise.all([
-    db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
-    db.member.findMany({ where: { archivedAt: { not: null } }, orderBy: { archivedAt: "desc" } }),
+    db.member.findMany({ where: { AND: [scope.where, { archivedAt: null }] }, orderBy: { name: "asc" }, include: { team: { select: { name: true } } } }),
+    db.member.findMany({ where: { AND: [scope.where, { archivedAt: { not: null } }] }, orderBy: { archivedAt: "desc" }, include: { team: { select: { name: true } } } }),
   ]);
+  const showTeam = scope.teams.length > 0;
+  // Equipo sugerido al agregar: el que se está viendo; un líder siempre debe elegir uno de los suyos.
+  const defaultTeamId = scope.teams.some((t) => t.id === scope.selected) ? scope.selected : scope.isAdmin ? "" : (scope.teams[0]?.id ?? "");
 
   return (
     <>
-      <PageHeader title="Equipo" description="Personas a las que das seguimiento. Quitar a alguien lo archiva y conserva su historial." />
+      <PageHeader title="Equipo" description={`Personas a las que das seguimiento${showTeam ? ` · ${scope.label}` : ""}. Quitar a alguien lo archiva y conserva su historial.`} />
 
-      {isAdmin && (
+      {canEdit && (scope.isAdmin || scope.teams.length > 0) && (
         <details className="group rounded-xl border border-slate-200 bg-white shadow-xs" open={active.length === 0 || undefined}>
           <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 text-sm font-semibold text-slate-800 sm:px-5 [&::-webkit-details-marker]:hidden">
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-indigo-50 text-indigo-600">
@@ -34,7 +37,7 @@ export default async function TeamPage() {
             <Icon name="chevron" className="ml-auto h-4 w-4 text-slate-400 transition group-open:rotate-180" />
           </summary>
           <div className="border-t border-slate-100 p-4 sm:p-5">
-            <MemberForm />
+            <MemberForm teams={scope.teams} defaultTeamId={defaultTeamId} allowNoTeam={scope.isAdmin} />
             <p className="mt-3 text-xs text-slate-500">
               Al agregarlo se trae su historial de GitHub y Zoho en segundo plano (el periodo depende de SYNC_LOOKBACK_DAYS).
             </p>
@@ -50,7 +53,7 @@ export default async function TeamPage() {
             <table className="rtable w-full">
               <thead>
                 <tr className="border-b border-slate-100">
-                  {["Nombre", "Correo", "GitHub", "Zoho", "Puesto", "Desde"].map((h) => (
+                  {["Nombre", ...(showTeam ? ["Equipo"] : []), "Correo", "GitHub", "Zoho", "Puesto", "Desde"].map((h) => (
                     <th key={h} className="th">{h}</th>
                   ))}
                 </tr>
@@ -61,6 +64,9 @@ export default async function TeamPage() {
                     <td className="td font-medium" data-primary>
                       <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
                     </td>
+                    {showTeam && (
+                      <td className="td" data-label="Equipo">{m.team?.name ?? <span className="text-slate-400">Sin equipo</span>}</td>
+                    )}
                     <td className="td break-all" data-label="Correo">{m.email}</td>
                     <td className="td" data-label="GitHub">
                       <span className="inline-flex flex-col items-end gap-0.5 sm:items-start">
@@ -91,9 +97,11 @@ export default async function TeamPage() {
               <li key={m.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 text-sm">
                 <span className="min-w-0">
                   <Link className="font-medium text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
-                  <span className="block text-xs text-slate-500 sm:ml-2 sm:inline">archivado {formatDate(m.archivedAt)}</span>
+                  <span className="block text-xs text-slate-500 sm:ml-2 sm:inline">
+                    {showTeam && `${m.team?.name ?? "Sin equipo"} · `}archivado {formatDate(m.archivedAt)}
+                  </span>
                 </span>
-                {isAdmin && (
+                {canEdit && (
                   <form action={restoreMemberAction}>
                     <input type="hidden" name="id" value={m.id} />
                     <SubmitButton className="btn-ghost btn-sm">Restaurar</SubmitButton>

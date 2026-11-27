@@ -3,6 +3,7 @@
 import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getConfig, invalidateConfig } from "@/lib/config";
@@ -16,6 +17,7 @@ import {
   getCurrentUser,
   hashPassword,
   requireAdmin,
+  requireManager,
   requireUser,
   revokeOtherSessions,
   verifyLogin,
@@ -31,6 +33,7 @@ import {
 import { checkGithub, resolveGithubLogin } from "@/lib/github";
 import { checkZoho } from "@/lib/zoho";
 import { syncAll } from "@/lib/sync";
+import { TEAM_COOKIE, assertMemberAccess, assertTeamAssignable, getScope } from "@/lib/access";
 
 export type FormState = { error?: string; ok?: string };
 
@@ -63,7 +66,7 @@ export async function logoutAction(): Promise<void> {
 }
 
 export async function changePasswordAction(_prev: FormState, fd: FormData): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireUser({ allowPasswordChange: true });
   const current = str(fd, "current");
   const next = str(fd, "next");
   if (next.length < 12) return { error: "La nueva contraseña debe tener al menos 12 caracteres." };
@@ -76,10 +79,32 @@ export async function changePasswordAction(_prev: FormState, fd: FormData): Prom
   if (!check.ok) {
     return { error: check.error.startsWith("Correo o contraseña") ? "La contraseña actual es incorrecta." : check.error };
   }
-  await db.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(next) } });
+  await db.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(next), mustChangePassword: false } });
   await revokeOtherSessions(user.id);
   await audit("auth.password_change", { userId: user.id, userEmail: user.email });
+  if (user.mustChangePassword) redirect("/");
   return { ok: "Contraseña actualizada." };
+}
+
+// ───────── Selector de equipo ─────────
+
+/** Guarda el equipo que se quiere ver. Se valida contra las opciones permitidas; la cookie nunca es de confianza. */
+export async function selectTeamAction(fd: FormData): Promise<void> {
+  const scope = await getScope();
+  const value = str(fd, "team");
+  const chosen = scope.options.some((o) => o.value === value) ? value : scope.options[0]?.value;
+  if (chosen) {
+    (await cookies()).set(TEAM_COOKIE, chosen, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+    });
+  }
+  revalidatePath("/", "layout");
+  // «Ver equipo» desde la pantalla de líderes: además de elegirlo, se va al resumen de ese equipo.
+  if (str(fd, "to") === "/") redirect("/");
 }
 
 // ───────── Compañeros ─────────
@@ -94,6 +119,9 @@ function parseMember(fd: FormData) {
   });
 }
 
+/** Equipo elegido en el formulario ("" = sin equipo). */
+const teamField = (fd: FormData) => str(fd, "teamId") || null;
+
 function uniqueMessage(e: unknown): string | null {
   if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
     return "Ya existe un compañero con ese correo o usuario de GitHub.";
@@ -102,10 +130,16 @@ function uniqueMessage(e: unknown): string | null {
 }
 
 export async function createMemberAction(_prev: FormState, fd: FormData): Promise<FormState> {
-  await requireAdmin();
+  const user = await requireManager();
   const parsed = parseMember(fd);
   if (!parsed.success) return { error: firstError(parsed.error) };
   const d = parsed.data;
+  let teamId: string | null;
+  try {
+    teamId = await assertTeamAssignable(user, teamField(fd));
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Equipo no válido." };
+  }
 
   let githubLogin = d.githubLogin ?? null;
   if (!githubLogin && (await getConfig()).githubConfigured) {
@@ -121,6 +155,7 @@ export async function createMemberAction(_prev: FormState, fd: FormData): Promis
         githubLogin,
         zohoEmail: d.zohoEmail ?? null,
         position: d.position ?? null,
+        teamId,
       },
     });
     id = m.id;
@@ -140,13 +175,19 @@ export async function createMemberAction(_prev: FormState, fd: FormData): Promis
 }
 
 export async function updateMemberAction(_prev: FormState, fd: FormData): Promise<FormState> {
-  await requireAdmin();
+  const user = await requireManager();
   const id = str(fd, "id");
   const parsed = parseMember(fd);
   if (!parsed.success) return { error: firstError(parsed.error) };
   const d = parsed.data;
-  const before = await db.member.findUnique({ where: { id } });
-  if (!before) return { error: "Compañero no encontrado." };
+  let before: Awaited<ReturnType<typeof assertMemberAccess>>;
+  let teamId: string | null;
+  try {
+    before = await assertMemberAccess(user, id);
+    teamId = await assertTeamAssignable(user, teamField(fd));
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Sin acceso." };
+  }
   const githubChanged = before.githubLogin !== (d.githubLogin ?? null);
   const zohoRelink = before.email !== d.email || before.zohoEmail !== (d.zohoEmail ?? null);
   try {
@@ -158,6 +199,7 @@ export async function updateMemberAction(_prev: FormState, fd: FormData): Promis
         githubLogin: d.githubLogin ?? null,
         zohoEmail: d.zohoEmail ?? null,
         position: d.position ?? null,
+        teamId,
         // Si cambia el usuario de GitHub o el correo, se vuelve a ligar y a traer su historial.
         ...(githubChanged ? { githubSyncedAt: null } : {}),
         ...(zohoRelink ? { zohoUserId: null, zohoSyncedAt: null } : {}),
@@ -180,8 +222,9 @@ export async function updateMemberAction(_prev: FormState, fd: FormData): Promis
 }
 
 export async function archiveMemberAction(fd: FormData): Promise<void> {
-  await requireAdmin();
+  const user = await requireManager();
   const id = str(fd, "id");
+  await assertMemberAccess(user, id);
   const m = await db.member.update({ where: { id }, data: { archivedAt: new Date() } });
   await audit("member.archive", { target: id, detail: m.email });
   revalidatePath("/", "layout");
@@ -189,8 +232,9 @@ export async function archiveMemberAction(fd: FormData): Promise<void> {
 }
 
 export async function restoreMemberAction(fd: FormData): Promise<void> {
-  await requireAdmin();
+  const user = await requireManager();
   const id = str(fd, "id");
+  await assertMemberAccess(user, id);
   // Mientras estuvo archivado no se sincronizó: Zoho vuelve a traer su historial y el cursor de
   // GitHub (que quedó viejo) ya cubre el hueco con el periodo máximo configurado.
   const m = await db.member.update({ where: { id }, data: { archivedAt: null, zohoSyncedAt: null } });
@@ -219,7 +263,7 @@ export async function deleteMemberAction(_prev: FormState, fd: FormData): Promis
 // ───────── Notas y acuerdos ─────────
 
 export async function addNoteAction(_prev: FormState, fd: FormData): Promise<FormState> {
-  const user = await requireAdmin();
+  const user = await requireManager();
   const parsed = noteSchema.safeParse({
     memberId: str(fd, "memberId"),
     kind: str(fd, "kind"),
@@ -228,8 +272,10 @@ export async function addNoteAction(_prev: FormState, fd: FormData): Promise<For
   });
   if (!parsed.success) return { error: firstError(parsed.error) };
   const d = parsed.data;
-  if (!(await db.member.findUnique({ where: { id: d.memberId }, select: { id: true } }))) {
-    return { error: "Compañero no encontrado." };
+  try {
+    await assertMemberAccess(user, d.memberId);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Sin acceso." };
   }
   await db.memberNote.create({
     data: { memberId: d.memberId, authorId: user.id, kind: d.kind, body: d.body, dueDate: d.dueDate ?? null },
@@ -239,17 +285,19 @@ export async function addNoteAction(_prev: FormState, fd: FormData): Promise<For
 }
 
 export async function toggleNoteAction(fd: FormData): Promise<void> {
-  await requireAdmin();
+  const user = await requireManager();
   const n = await db.memberNote.findUnique({ where: { id: str(fd, "id") } });
   if (!n) return;
+  await assertMemberAccess(user, n.memberId);
   await db.memberNote.update({ where: { id: n.id }, data: { done: !n.done } });
   revalidatePath(`/team/${n.memberId}`);
 }
 
 export async function deleteNoteAction(fd: FormData): Promise<void> {
-  await requireAdmin();
+  const user = await requireManager();
   const n = await db.memberNote.findUnique({ where: { id: str(fd, "id") } });
   if (!n) return;
+  await assertMemberAccess(user, n.memberId);
   await db.memberNote.delete({ where: { id: n.id } });
   revalidatePath(`/team/${n.memberId}`);
 }

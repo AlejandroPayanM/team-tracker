@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
+import { selectTeamAction } from "@/app/actions";
 import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { countPendingBackfill } from "@/lib/sync";
@@ -17,7 +18,8 @@ export default async function Dashboard({
 }: {
   searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
-  await requireUser();
+  const scope = await getScope();
+  const ids = await scope.memberIds();
   const sp = await searchParams;
   const range = parseRange(sp);
   const repo = parseRepo(sp.repo);
@@ -25,18 +27,40 @@ export default async function Dashboard({
   const chartN = Math.max(MIN_CHART_WEEKS, weeks); // la gráfica da contexto si el rango es corto
   const total = Math.max(chartN, weeks * 2); // + el periodo previo, para comparar
 
-  const pendingBackfill = await countPendingBackfill();
+  const pendingBackfill = await countPendingBackfill(scope.where);
   const [series, members, openPrs, lastRuns, repos] = await Promise.all([
-    weeklySeries(range.end, total, undefined, repo),
-    db.member.findMany({ where: { archivedAt: null }, orderBy: { name: "asc" } }),
+    weeklySeries(range.end, total, undefined, repo, ids),
+    db.member.findMany({
+      where: { AND: [scope.where, { archivedAt: null }] },
+      include: { team: { select: { id: true, name: true } } },
+      orderBy: { name: "asc" },
+    }),
     db.pullRequest.findMany({
-      where: { state: "OPEN", isDraft: false, memberId: { not: null }, member: { archivedAt: null }, ...(repo ? { repo } : {}) },
+      where: { state: "OPEN", isDraft: false, memberId: { in: ids }, member: { archivedAt: null }, ...(repo ? { repo } : {}) },
       include: { member: { select: { id: true, name: true } } },
       orderBy: { createdAtGh: "asc" },
     }),
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
-    listRepos(),
+    listRepos(ids),
   ]);
+
+  // Vista general (varios equipos a la vez): resumen por equipo.
+  const showTeams = scope.selected === "all" && scope.teams.length > 0;
+  const teamRows = new Map<string, { id: string; name: string; people: number; opened: number; merged: number; reviews: number; tasks: number }>();
+  if (showTeams) {
+    for (const m of members) {
+      const id = m.team?.id ?? "none";
+      const row = teamRows.get(id) ?? { id, name: m.team?.name ?? "Sin equipo", people: 0, opened: 0, merged: 0, reviews: 0, tasks: 0 };
+      const s = sumStats(series.byMember.get(m.id)?.slice(-weeks) ?? []);
+      row.people++;
+      row.opened += s.prsOpened;
+      row.merged += s.prsMerged;
+      row.reviews += s.reviews;
+      row.tasks += s.tasksCompleted;
+      teamRows.set(id, row);
+    }
+  }
+  const teamList = [...teamRows.values()].sort((a, b) => (a.id === "none" ? 1 : b.id === "none" ? -1 : a.name.localeCompare(b.name)));
 
   const cur = sumStats(series.team.slice(-weeks));
   const prev = sumStats(series.team.slice(-2 * weeks, -weeks));
@@ -51,7 +75,10 @@ export default async function Dashboard({
 
   return (
     <>
-      <PageHeader title="Resumen del equipo" description="Actividad de PRs y tareas en el periodo elegido, comparada con el periodo previo." />
+      <PageHeader
+        title={scope.teams.length ? `Resumen · ${scope.label}` : "Resumen del equipo"}
+        description="Actividad de PRs y tareas en el periodo elegido, comparada con el periodo previo."
+      />
       <RangeNav base="/" range={range} repos={repos} repo={repo} />
 
       {repo && (
@@ -101,10 +128,51 @@ export default async function Dashboard({
         «Abiertos al cierre» cuenta los PRs sincronizados que seguían abiertos al terminar cada semana.
       </p>
 
+      {showTeams && teamList.length > 0 && (
+        <Card title="Por equipo">
+          <div className="scroll-x -mx-4 sm:-mx-5">
+            <table className="rtable w-full">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  {["Equipo", "Personas", "PRs creados", "Mergeados", "Reviews", "Tareas Zoho", ""].map((h, i) => (
+                    <th key={i} className="th">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
+                {teamList.map((t) => (
+                  <tr key={t.id} className="hover:bg-slate-50">
+                    <td className="td font-medium" data-primary>{t.name}</td>
+                    <td className="td tabular-nums" data-label="Personas">{t.people}</td>
+                    <td className="td tabular-nums" data-label="PRs creados">{t.opened}</td>
+                    <td className="td tabular-nums" data-label="Mergeados">{t.merged}</td>
+                    <td className="td tabular-nums" data-label="Reviews">{t.reviews}</td>
+                    <td className="td tabular-nums" data-label="Tareas Zoho">{repo ? "—" : t.tasks}</td>
+                    <td className="td" data-empty-label>
+                      <form action={selectTeamAction}>
+                        <input type="hidden" name="team" value={t.id} />
+                        <button type="submit" className="btn-ghost btn-sm">Ver solo este equipo</button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       <Card title="Por compañero">
         {members.length === 0 ? (
           <Empty>
-            Aún no hay compañeros. <Link className="text-indigo-600 underline" href="/team">Agrega el primero</Link>.
+            {scope.teams.length === 0 && !scope.isAdmin ? (
+              <>Aún no tienes equipos asignados. Pide a un administrador que te asigne uno.</>
+            ) : (
+              <>
+                Aún no hay compañeros{scope.selected !== "all" ? " en este equipo" : ""}.{" "}
+                {scope.canManage && <Link className="text-indigo-600 underline" href="/team">Agrega el primero</Link>}
+              </>
+            )}
           </Empty>
         ) : (
           <div className="scroll-x -mx-4 sm:-mx-5">
@@ -130,6 +198,7 @@ export default async function Dashboard({
                         <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>
                           {m.name}
                         </Link>
+                        {scope.selected === "all" && m.team && <div className="text-xs font-normal text-slate-500">{m.team.name}</div>}
                         {!m.githubLogin && <div className="text-xs font-normal text-amber-700">sin usuario de GitHub</div>}
                       </td>
                       <td className="td tabular-nums" data-label="PRs creados">{s.prsOpened}</td>

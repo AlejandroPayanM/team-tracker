@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
 import { listRepos } from "@/lib/filters";
 import { addWeeks, startOfWeek, weekParam } from "@/lib/weeks";
 import { buildReport, formatValue } from "@/lib/reports/build";
@@ -61,12 +61,13 @@ function Section({ title, hint, open, children }: { title: string; hint?: string
 }
 
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  await requireUser();
+  const scope = await getScope();
+  const ids = await scope.memberIds();
   const spec = parseSpec(await searchParams);
   const [members, repos, report] = await Promise.all([
-    db.member.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, archivedAt: true } }),
-    listRepos(),
-    buildReport(spec),
+    db.member.findMany({ where: scope.where, orderBy: { name: "asc" }, select: { id: true, name: true, archivedAt: true } }),
+    listRepos(ids),
+    buildReport(spec, scope.where),
   ]);
 
   // Dos versiones de la gráfica: ancha (≥ 640 px) y angosta con texto legible para celular.

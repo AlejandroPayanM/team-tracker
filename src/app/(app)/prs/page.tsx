@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { getScope } from "@/lib/access";
 import { avgMergeHours, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { addWeeks, formatDate, parseRange, shortDate, weekParam } from "@/lib/weeks";
@@ -18,7 +18,8 @@ export default async function PrsPage({
 }: {
   searchParams: Promise<{ from?: string; to?: string; week?: string; repo?: string }>;
 }) {
-  await requireUser();
+  const scope = await getScope();
+  const ids = await scope.memberIds();
   const sp = await searchParams;
   const range = parseRange(sp);
   const repo = parseRepo(sp.repo);
@@ -27,13 +28,13 @@ export default async function PrsPage({
   const total = Math.max(chartN, weeks * 2);
 
   const inRange = { gte: range.start, lt: addWeeks(range.end, 1) };
-  const team = { memberId: { not: null } };
+  const team = { memberId: { in: ids } }; // solo PRs de las personas dentro del alcance elegido
   const inRepo = repo ? { repo } : {};
   const touched = { OR: [{ createdAtGh: inRange }, { mergedAt: inRange }] };
 
   const [series, repos, rangePrs, openNowByRepo, stateCounts, list, listTotal] = await Promise.all([
-    weeklySeries(range.end, total, undefined, repo),
-    listRepos(),
+    weeklySeries(range.end, total, undefined, repo, ids),
+    listRepos(ids),
     // Base de la tabla por repositorio (siempre sobre todos los repositorios).
     db.pullRequest.findMany({
       where: { ...team, ...touched },
