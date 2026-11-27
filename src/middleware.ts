@@ -6,7 +6,16 @@ const COOKIE = process.env.NODE_ENV === "production" ? "__Host-tt_session" : "tt
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname === "/login" || pathname.startsWith("/api/cron/")) return NextResponse.next();
+  // Públicos: el inicio de sesión, el cron y los recursos de instalación (el navegador los pide sin cookies).
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/api/cron/") ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/apple-icon" ||
+    pathname.startsWith("/pwa-icon/")
+  ) {
+    return NextResponse.next();
+  }
   if (!req.cookies.get(COOKIE)?.value) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";

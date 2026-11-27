@@ -46,6 +46,20 @@ const PATHS = {
     </>
   ),
   menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="19" cy="12" r="1.4" />
+    </>
+  ),
+  filter: <path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" />,
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </>
+  ),
   close: <path d="M18 6 6 18M6 6l12 12" />,
   refresh: (
     <>

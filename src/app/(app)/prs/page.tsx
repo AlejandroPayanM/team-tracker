@@ -4,7 +4,7 @@ import { getScope } from "@/lib/access";
 import { avgMergeHours, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { addWeeks, formatDate, parseRange, shortDate, weekParam } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
+import { Badge, Bars, Card, ChartRail, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -115,7 +115,7 @@ export default async function PrsPage({
         <Stat label="Prom. creación → merge" value={fmtHours(avgMergeHours(cur))} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <ChartRail>
         <Card title="PRs creados por semana">
           <Bars values={chartWeeks.map((s) => s.prsOpened)} labels={labels} color="bg-amber-500" dim={dim} />
         </Card>
@@ -143,7 +143,7 @@ export default async function PrsPage({
             </div>
           )}
         </Card>
-      </div>
+      </ChartRail>
 
       {!repo && (
         <Card title="Por repositorio">
@@ -215,7 +215,7 @@ export default async function PrsPage({
                     <td className="td" data-label="Estado">{prBadge(p.state, p.isDraft)}</td>
                     <td className="td whitespace-nowrap" data-label="Creado">{formatDate(p.createdAtGh)}</td>
                     <td className="td whitespace-nowrap" data-label="Merge">{formatDate(p.mergedAt)}</td>
-                    <td className="td text-xs" data-label="Cambios">
+                    <td className="td text-xs" data-label="Cambios" data-wide>
                       <span><span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.</span>
                     </td>
                   </tr>

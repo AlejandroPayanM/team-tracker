@@ -3,6 +3,7 @@ import { getScope } from "@/lib/access";
 import { selectTeamAction } from "@/app/actions";
 import { isIdle, sumStats, weeklySeries, type WeekStats } from "@/lib/stats";
 import { parseRange } from "@/lib/weeks";
+import { ListFilter } from "@/components/list-filter";
 import { Badge, Card, Empty, PageHeader, RangeNav } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -99,12 +100,12 @@ export default async function LeadersPage({ searchParams }: { searchParams: Prom
           <Empty>Aún no hay equipos. {scope.isAdmin && "Créalos en la sección Equipos y designa a su líder."}</Empty>
         </Card>
       ) : (
-        <div className="space-y-5">
+        <ListFilter placeholder="Buscar líder o equipo…" noun="equipos">
           {list.map((g) => {
             const t = sum(g);
             const none = g.key === "none";
             return (
-              <section key={g.key} className={`min-w-0 overflow-hidden rounded-xl border bg-white shadow-xs ${none ? "border-dashed border-amber-300" : "border-slate-200"}`}>
+              <section key={g.key} data-search-group={g.name} className={`min-w-0 overflow-hidden rounded-xl border bg-white shadow-xs ${none ? "border-dashed border-amber-300" : "border-slate-200"}`}>
                 <header className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
                   <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full font-semibold ${none ? "bg-amber-100 text-amber-700" : "bg-indigo-100 text-indigo-700"}`} aria-hidden>
                     {none ? "?" : g.name.trim().charAt(0).toUpperCase()}
@@ -139,7 +140,7 @@ export default async function LeadersPage({ searchParams }: { searchParams: Prom
                       {g.teams.map((x) => {
                         const r = byTeam.get(x.id)!;
                         return (
-                          <tr key={x.id} className="hover:bg-slate-50">
+                          <tr key={x.id} className="hover:bg-slate-50" data-search={x.name}>
                             <td className="td font-medium" data-primary>{x.name}</td>
                             <td className="td tabular-nums" data-label="Personas">{r.people}</td>
                             <td className={`td tabular-nums ${r.idle ? "text-amber-700" : ""}`} data-label="Sin actividad">{r.idle}</td>
@@ -163,7 +164,7 @@ export default async function LeadersPage({ searchParams }: { searchParams: Prom
               </section>
             );
           })}
-        </div>
+        </ListFilter>
       )}
     </>
   );

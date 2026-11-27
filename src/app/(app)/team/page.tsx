@@ -4,6 +4,7 @@ import { getConfig } from "@/lib/config";
 import { getScope } from "@/lib/access";
 import { Badge, Card, Empty, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icons";
+import { ListFilter } from "@/components/list-filter";
 import { MemberForm, SubmitButton } from "@/components/forms";
 import { restoreMemberAction } from "@/app/actions";
 import { formatDate } from "@/lib/weeks";
@@ -45,6 +46,8 @@ export default async function TeamPage() {
         </details>
       )}
 
+      <ListFilter placeholder="Buscar persona por nombre, correo, GitHub o equipo…" noun="personas">
+      <div data-search-group="">
       <Card title={`Activos (${active.length})`}>
         {active.length === 0 ? (
           <Empty>No hay compañeros activos.</Empty>
@@ -60,14 +63,14 @@ export default async function TeamPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 max-sm:mx-4 max-sm:block">
                 {active.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50">
+                  <tr key={m.id} className="hover:bg-slate-50" data-search={[m.name, m.email, m.githubLogin, m.position, m.team?.name].filter(Boolean).join(" ")}>
                     <td className="td font-medium" data-primary>
                       <Link className="text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
                     </td>
                     {showTeam && (
                       <td className="td" data-label="Equipo">{m.team?.name ?? <span className="text-slate-400">Sin equipo</span>}</td>
                     )}
-                    <td className="td break-all" data-label="Correo">{m.email}</td>
+                    <td className="td break-all" data-label="Correo" data-wide>{m.email}</td>
                     <td className="td" data-label="GitHub">
                       <span className="inline-flex flex-col items-end gap-0.5 sm:items-start">
                         {m.githubLogin ?? <Badge tone="amber">sin vincular</Badge>}
@@ -89,12 +92,14 @@ export default async function TeamPage() {
           </div>
         )}
       </Card>
+      </div>
 
       {archived.length > 0 && (
+        <div data-search-group="">
         <Card title={`Archivados (${archived.length})`}>
           <ul className="divide-y divide-slate-100">
             {archived.map((m) => (
-              <li key={m.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 text-sm">
+              <li key={m.id} data-search={[m.name, m.email, m.githubLogin, m.team?.name].filter(Boolean).join(" ")} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 text-sm">
                 <span className="min-w-0">
                   <Link className="font-medium text-indigo-700 hover:underline" href={`/team/${m.id}`}>{m.name}</Link>
                   <span className="block text-xs text-slate-500 sm:ml-2 sm:inline">
@@ -111,7 +116,9 @@ export default async function TeamPage() {
             ))}
           </ul>
         </Card>
+        </div>
       )}
+      </ListFilter>
     </>
   );
 }

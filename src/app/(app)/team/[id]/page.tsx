@@ -6,7 +6,7 @@ import { getScope } from "@/lib/access";
 import { emptyStats, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { formatDate, parseRange, relativeDays, shortDate } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, Notice, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
+import { Badge, Bars, Card, ChartRail, Empty, Notice, RangeNav, STAT_GRID_5, Stat, prBadge } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { DeleteMemberForm, MemberForm, NoteForm, SubmitButton } from "@/components/forms";
 import { archiveMemberAction, deleteNoteAction, restoreMemberAction, toggleNoteAction } from "@/app/actions";
@@ -128,7 +128,7 @@ export default async function MemberPage({
         Histórico sincronizado: {totalPrs} PRs ({totalMerged} mergeados) · {totalReviews} reviews.
       </p>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <ChartRail cols="md:grid-cols-2 xl:grid-cols-3">
         <Card title="PRs creados por semana">
           <Bars values={weeks.map((s) => s.prsOpened)} labels={labels} color="bg-amber-500" dim={dim} />
         </Card>
@@ -146,7 +146,7 @@ export default async function MemberPage({
             <Bars values={weeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
           </Card>
         )}
-      </div>
+      </ChartRail>
 
       <Card title={`Seguimiento${pendingActions.length ? ` · ${pendingActions.length} pendiente(s)` : ""}`}>
         {canEdit && <NoteForm memberId={m.id} />}
@@ -262,7 +262,7 @@ export default async function MemberPage({
                     <td className="td" data-label="Estado">{prBadge(p.state, p.isDraft)}</td>
                     <td className="td whitespace-nowrap" data-label="Creado">{formatDate(p.createdAtGh)}</td>
                     <td className="td whitespace-nowrap" data-label="Merge">{formatDate(p.mergedAt)}</td>
-                    <td className="td text-xs" data-label="Cambios">
+                    <td className="td text-xs" data-label="Cambios" data-wide>
                       <span><span className="text-emerald-700">+{p.additions}</span> / <span className="text-red-700">−{p.deletions}</span> · {p.changedFiles} arch.</span>
                     </td>
                     <td className="td text-xs" data-label="1.er review">{p.firstReviewAt ? relativeDays(p.firstReviewAt) : "—"}</td>

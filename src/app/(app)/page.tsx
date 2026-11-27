@@ -6,7 +6,7 @@ import { avgMergeHours, isIdle, sumStats, weeklySeries } from "@/lib/stats";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { countPendingBackfill } from "@/lib/sync";
 import { parseRange, relativeDays, shortDate, weekParam } from "@/lib/weeks";
-import { Badge, Bars, Card, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat } from "@/components/ui";
+import { Badge, Bars, Card, ChartRail, Empty, Notice, PageHeader, RangeNav, STAT_GRID_5, Stat } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +106,7 @@ export default async function Dashboard({
         {!repo && <Stat label="Tareas Zoho completadas" value={cur.tasksCompleted} prev={prev.tasksCompleted} />}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <ChartRail>
         <Card title="PRs creados por semana">
           <Bars values={chartWeeks.map((s) => s.prsOpened)} labels={labels} color="bg-amber-500" dim={dim} />
         </Card>
@@ -121,9 +121,9 @@ export default async function Dashboard({
             <Bars values={chartWeeks.map((s) => s.tasksCompleted)} labels={labels} color="bg-emerald-500" dim={dim} />
           </Card>
         )}
-      </div>
+      </ChartRail>
 
-      <p className="-mt-3 text-xs text-slate-500">
+      <p className="-mt-2 hidden text-xs text-slate-500 sm:block">
         Para ver los PRs en conjunto, por repositorio y con su detalle, entra a <Link href="/prs" className="text-indigo-600 hover:underline">Pull requests</Link>.
         «Abiertos al cierre» cuenta los PRs sincronizados que seguían abiertos al terminar cada semana.
       </p>

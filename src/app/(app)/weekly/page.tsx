@@ -4,6 +4,8 @@ import { addWeeks, formatDate, parseRange } from "@/lib/weeks";
 import { listRepos, parseRepo } from "@/lib/filters";
 import { Badge, Card, Empty, Notice, PageHeader, RangeNav, prBadge } from "@/components/ui";
 import Link from "next/link";
+import { Icon } from "@/components/icons";
+import { ListFilter } from "@/components/list-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -59,18 +61,26 @@ export default async function WeeklyPage({
         </Card>
       )}
 
-      {members.map((m) => {
+      {members.length > 0 && (
+      <ListFilter placeholder="Buscar persona…" noun="personas" className="space-y-4">
+      {members.map((m, idx) => {
         const empty = !m.pullRequests.length && !m.reviews.length && !m.zohoTasks.length;
+        // Cada persona es un acordeón: con muchas personas solo se abren las primeras y el resto se explora tocando.
         return (
-          <Card
-            key={m.id}
-            title={m.name}
-            action={
-              <span className="text-xs text-slate-500">
-                {m.pullRequests.length} PRs · {m.reviews.length} reviews · {m.zohoTasks.length} tareas
+          <details key={m.id} data-search={m.name} open={members.length <= 4 || idx < 2 || undefined} className="group min-w-0 rounded-xl border border-slate-200 bg-white shadow-xs">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-2 sm:px-5 [&::-webkit-details-marker]:hidden">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700" aria-hidden>
+                {m.name.trim().charAt(0).toUpperCase() || "?"}
               </span>
-            }
-          >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-slate-800">{m.name}</span>
+                <span className={`block text-xs ${empty ? "text-amber-700" : "text-slate-500"}`}>
+                  {empty ? "Sin actividad" : `${m.pullRequests.length} PRs · ${m.reviews.length} reviews · ${m.zohoTasks.length} tareas`}
+                </span>
+              </span>
+              <Icon name="chevron" className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180" />
+            </summary>
+            <div className="border-t border-slate-100 p-4 sm:p-5">
             {empty ? (
               <p className="text-sm text-amber-700">Sin actividad registrada en {multi ? "este periodo" : "esta semana"}.</p>
             ) : (
@@ -140,9 +150,12 @@ export default async function WeeklyPage({
             <Link href={`/team/${m.id}`} className="mt-4 inline-flex min-h-9 items-center text-sm font-medium text-indigo-600 hover:underline">
               Ver perfil completo →
             </Link>
-          </Card>
+            </div>
+          </details>
         );
       })}
+      </ListFilter>
+      )}
     </>
   );
 }

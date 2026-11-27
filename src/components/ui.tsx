@@ -38,12 +38,34 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
-        {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+    <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[1.65rem] font-bold leading-tight tracking-tight text-slate-900 sm:text-2xl sm:font-semibold">{title}</h1>
+          {/* En celular se omite la explicación: la pantalla ya habla por sí sola y así queda más aire. */}
+          {description && <p className="mt-1 hidden text-sm text-slate-500 sm:block">{description}</p>}
+        </div>
       </div>
       {actions && <div className="min-w-0 lg:max-w-[70%]">{actions}</div>}
+    </div>
+  );
+}
+
+/**
+ * Tarjetas de gráficas: en celular se deslizan de lado (cada una a casi todo el ancho, asomando la siguiente);
+ * desde tablet forman una cuadrícula. Sustituye a una columna interminable de gráficas.
+ */
+export function ChartRail({ children, cols = "md:grid-cols-2" }: { children: React.ReactNode; cols?: string }) {
+  return (
+    <div>
+      <div
+        className={`no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-1 max-md:*:w-[86%] max-md:*:shrink-0 max-md:*:snap-center md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 ${cols}`}
+      >
+        {children}
+      </div>
+      <p className="mt-1 text-center text-[11px] text-slate-400 md:hidden" aria-hidden>
+        Desliza para ver más gráficas →
+      </p>
     </div>
   );
 }
@@ -55,9 +77,9 @@ export const STAT_GRID_4 = "grid grid-cols-2 gap-3 md:grid-cols-4 max-md:[&>*:la
 export function Stat({ label, value, prev }: { label: string; value: number | string; prev?: number }) {
   const delta = typeof value === "number" && prev !== undefined ? value - prev : null;
   return (
-    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-xs sm:p-4">
       <div className="text-[11px] font-semibold uppercase leading-tight tracking-wider text-slate-500">{label}</div>
-      <div className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight sm:text-3xl">{value}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums tracking-tight sm:mt-1.5 sm:text-3xl">{value}</div>
       {delta !== null && delta !== 0 && (
         <div
           className={`mt-1.5 inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ${

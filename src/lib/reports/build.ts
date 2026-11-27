@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "../db";
 import { WEEK_MS, addWeeks, formatDate, formatDateTime, formatRange, shortDate } from "../weeks";
-import { CHART_DIMS, GROUPS, METRICS, type ChartDim, type ChartType, type MetricKey, type ReportSpec } from "./spec";
+import { CHART_DIMS, DATE_BY, GROUPS, METRICS, PR_STATES, type ChartDim, type ChartType, type MetricKey, type PrStateKey, type ReportSpec } from "./spec";
 
 export const MAX_DETAIL_ROWS = 5000;
 
@@ -41,6 +41,27 @@ export type Cube = {
   scope: ScopeMember[];
 };
 
+/** Personas incluidas en el reporte: el alcance del usuario (equipos) combinado con lo que pidió el reporte. */
+async function resolveScope(spec: ReportSpec, memberWhere: Prisma.MemberWhereInput): Promise<ScopeMember[]> {
+  const scopeRows = await db.member.findMany({
+    where: {
+      AND: [
+        memberWhere,
+        spec.members.length ? { id: { in: spec.members } } : spec.includeArchived ? {} : { archivedAt: null },
+      ],
+    },
+    select: { id: true, name: true, archivedAt: true, team: { select: { id: true, name: true } } },
+    orderBy: { name: "asc" },
+  });
+  return scopeRows.map((m) => ({
+    id: m.id,
+    name: m.name,
+    archived: !!m.archivedAt,
+    teamId: m.team?.id ?? null,
+    teamName: m.team?.name ?? null,
+  }));
+}
+
 /**
  * `memberWhere` es el alcance del usuario (equipos). Se combina con AND: aunque el reporte pida a una persona de otro
  * equipo por id, no entra.
@@ -52,23 +73,7 @@ export async function loadCube(spec: ReportSpec, memberWhere: Prisma.MemberWhere
   const end = addWeeks(range.end, 1);
   const inRange = { gte: first, lt: end };
 
-  const scopeRows = await db.member.findMany({
-    where: {
-      AND: [
-        memberWhere,
-        spec.members.length ? { id: { in: spec.members } } : spec.includeArchived ? {} : { archivedAt: null },
-      ],
-    },
-    select: { id: true, name: true, archivedAt: true, team: { select: { id: true, name: true } } },
-    orderBy: { name: "asc" },
-  });
-  const scope: ScopeMember[] = scopeRows.map((m) => ({
-    id: m.id,
-    name: m.name,
-    archived: !!m.archivedAt,
-    teamId: m.team?.id ?? null,
-    teamName: m.team?.name ?? null,
-  }));
+  const scope = await resolveScope(spec, memberWhere);
   const ids = scope.map((m) => m.id);
   const zohoApplies = spec.repos.length === 0;
   if (!ids.length) return { first, weeks, cells: [], tasks: [], zohoApplies, scope };
@@ -287,7 +292,154 @@ export function formatValue(kind: ColumnKind, v: string | number | Date | null):
 
 const STATE_LABEL: Record<string, string> = { MERGED: "Mergeado", OPEN: "Abierto", CLOSED: "Cerrado sin merge" };
 
+const PR_STATE_WHERE: Record<PrStateKey, Prisma.PullRequestWhereInput> = {
+  OPEN: { state: "OPEN", isDraft: false },
+  DRAFT: { state: "OPEN", isDraft: true },
+  MERGED: { state: "MERGED" },
+  CLOSED: { state: "CLOSED" },
+};
+
+/**
+ * Listado de PRs: una fila por PR de las personas elegidas (dentro del alcance del usuario), con filtros de estado,
+ * fechas, repositorio y texto. Los totales del encabezado cuentan todos los que cumplen los filtros aunque la lista
+ * se recorte al máximo permitido.
+ */
+async function buildPrList(spec: ReportSpec, memberWhere: Prisma.MemberWhereInput): Promise<Report> {
+  const scope = await resolveScope(spec, memberWhere);
+  const ids = scope.map((m) => m.id);
+  const { states, dateBy, q, sort } = spec.prs;
+  const inRange = { gte: spec.range.start, lt: addWeeks(spec.range.end, 1) };
+
+  const and: Prisma.PullRequestWhereInput[] = [{ memberId: { in: ids } }];
+  if (spec.repos.length) and.push({ repo: { in: spec.repos } });
+  if (states.length) and.push({ OR: states.map((s) => PR_STATE_WHERE[s]) });
+  if (dateBy === "any") and.push({ OR: [{ createdAtGh: inRange }, { mergedAt: inRange }] });
+  else if (dateBy === "created") and.push({ createdAtGh: inRange });
+  else if (dateBy === "merged") and.push({ mergedAt: inRange });
+  else if (dateBy === "closed") and.push({ state: "CLOSED", closedAt: inRange });
+  if (q) {
+    const num = /^#?(\d{1,9})$/.exec(q);
+    and.push({
+      OR: [
+        { title: { contains: q, mode: "insensitive" } },
+        { repo: { contains: q, mode: "insensitive" } },
+        ...(num ? [{ number: Number(num[1]) }] : []),
+      ],
+    });
+  }
+  const where: Prisma.PullRequestWhereInput = { AND: and };
+  const orderBy: Prisma.PullRequestOrderByWithRelationInput[] =
+    sort === "created_asc"
+      ? [{ createdAtGh: "asc" }, { id: "asc" }]
+      : sort === "merged_desc"
+        ? [{ mergedAt: { sort: "desc", nulls: "last" } }, { id: "asc" }]
+        : sort === "author"
+          ? [{ member: { name: "asc" } }, { createdAtGh: "desc" }, { id: "asc" }]
+          : sort === "repo"
+            ? [{ repo: "asc" }, { number: "desc" }, { id: "asc" }]
+            : [{ createdAtGh: "desc" }, { id: "asc" }];
+
+  const [prs, groups] = ids.length
+    ? await Promise.all([
+        db.pullRequest.findMany({
+          where,
+          orderBy,
+          take: MAX_DETAIL_ROWS,
+          include: { member: { select: { name: true, team: { select: { name: true } } } } },
+        }),
+        db.pullRequest.groupBy({ by: ["state", "isDraft"], where, _count: { _all: true }, _sum: { additions: true, deletions: true } }),
+      ])
+    : [[], []];
+
+  let count = 0;
+  let open = 0;
+  let draft = 0;
+  let merged = 0;
+  let closed = 0;
+  let adds = 0;
+  let dels = 0;
+  for (const g of groups) {
+    const n = g._count._all;
+    count += n;
+    adds += g._sum.additions ?? 0;
+    dels += g._sum.deletions ?? 0;
+    if (g.state === "MERGED") merged += n;
+    else if (g.state === "CLOSED") closed += n;
+    else if (g.isDraft) draft += n;
+    else open += n;
+  }
+  const truncated = count > prs.length;
+  const notes: string[] = [];
+  if (truncated) notes.push(`Se incluyen los ${prs.length.toLocaleString("es-MX")} PRs de ${count.toLocaleString("es-MX")}; acota los filtros para ver el resto.`);
+
+  const columns: ReportColumn[] = [
+    { key: "repo", label: "Repositorio", kind: "text", width: 22 },
+    { key: "number", label: "PR", kind: "int", width: 8 },
+    { key: "title", label: "Título", kind: "text", width: 48 },
+    { key: "author", label: "Autor", kind: "text", width: 22 },
+    { key: "team", label: "Equipo", kind: "text", width: 18 },
+    { key: "state", label: "Estado", kind: "text", width: 16 },
+    { key: "createdAt", label: "Creado", kind: "date", width: 13 },
+    { key: "mergedAt", label: "Mergeado", kind: "date", width: 13 },
+    { key: "closedAt", label: "Cerrado", kind: "date", width: 13 },
+    { key: "additions", label: "Líneas +", kind: "int", width: 10 },
+    { key: "deletions", label: "Líneas −", kind: "int", width: 10 },
+    { key: "changedFiles", label: "Archivos", kind: "int", width: 10 },
+    { key: "mergeHours", label: "Horas a merge", kind: "hours", width: 14 },
+    { key: "url", label: "Enlace", kind: "link", width: 40 },
+  ];
+  const rows: ReportRow[] = prs.map((p) => ({
+    repo: p.repo,
+    number: p.number,
+    title: p.title,
+    author: p.member?.name ?? p.authorLogin,
+    team: p.member?.team?.name ?? null,
+    state: p.state === "OPEN" && p.isDraft ? "Borrador" : (STATE_LABEL[p.state] ?? p.state),
+    createdAt: p.createdAtGh,
+    mergedAt: p.mergedAt,
+    closedAt: p.closedAt,
+    additions: p.additions,
+    deletions: p.deletions,
+    changedFiles: p.changedFiles,
+    mergeHours: p.mergedAt ? (p.mergedAt.getTime() - p.createdAtGh.getTime()) / 3_600_000 : null,
+    url: p.url,
+  }));
+
+  const num = (n: number) => n.toLocaleString("es-MX");
+  const names = scope.map((m) => m.name);
+  const subtitle = [
+    `${DATE_BY[dateBy]}${dateBy === "all" ? "" : `: ${formatRange(spec.range.start, spec.range.end)}${spec.range.weeks > 1 ? ` (${spec.range.weeks} semanas)` : ""}`}`,
+    `Personas: ${spec.members.length ? names.slice(0, 8).join(", ") + (names.length > 8 ? ` y ${names.length - 8} más` : "") : spec.includeArchived ? "todas (incluye archivadas)" : "todas las activas"}`,
+    `Repositorios: ${spec.repos.length ? spec.repos.join(", ") : "todos"}`,
+    `Estados: ${states.length ? states.map((s) => PR_STATES[s].toLowerCase()).join(", ") : "todos"}${q ? ` · Texto: «${q}»` : ""}`,
+    `Generado: ${formatDateTime(new Date())}`,
+  ];
+
+  return {
+    title: "Listado de PRs",
+    subtitle,
+    generatedAt: new Date(),
+    columns,
+    rows,
+    totals: null,
+    kpis: [
+      { label: "PRs en el listado", value: num(count) },
+      { label: "Abiertos", value: num(open) },
+      { label: "Borradores", value: num(draft) },
+      { label: "Mergeados", value: num(merged) },
+      { label: "Cerrados sin merge", value: num(closed) },
+      { label: "Líneas agregadas", value: num(adds) },
+      { label: "Líneas eliminadas", value: num(dels) },
+    ],
+    chart: null,
+    totalRows: count,
+    truncated,
+    notes,
+  };
+}
+
 export async function buildReport(spec: ReportSpec, memberWhere: Prisma.MemberWhereInput): Promise<Report> {
+  if (spec.group === "detail") return buildPrList(spec, memberWhere);
   const cube = await loadCube(spec, memberWhere);
   const teamName = new Map<string, string>([["none", "Sin equipo"]]);
   for (const m of cube.scope) if (m.teamId && m.teamName) teamName.set(m.teamId, m.teamName);
@@ -307,59 +459,7 @@ export async function buildReport(spec: ReportSpec, memberWhere: Prisma.MemberWh
   let totalRows = 0;
   let truncated = false;
 
-  if (spec.group === "detail") {
-    const ids = cube.scope.map((m) => m.id);
-    const inRange = { gte: spec.range.start, lt: addWeeks(spec.range.end, 1) };
-    const where = {
-      memberId: { in: ids },
-      ...(spec.repos.length ? { repo: { in: spec.repos } } : {}),
-      OR: [{ createdAtGh: inRange }, { mergedAt: inRange }],
-    };
-    const [prs, count] = ids.length
-      ? await Promise.all([
-          db.pullRequest.findMany({
-            where,
-            orderBy: [{ createdAtGh: "desc" }, { id: "asc" }],
-            take: MAX_DETAIL_ROWS,
-            include: { member: { select: { name: true } } },
-          }),
-          db.pullRequest.count({ where }),
-        ])
-      : [[], 0];
-    totalRows = count;
-    truncated = count > prs.length;
-    if (truncated) notes.push(`Se incluyen los ${prs.length.toLocaleString("es-MX")} PRs más recientes de ${count.toLocaleString("es-MX")}.`);
-    columns = [
-      { key: "repo", label: "Repositorio", kind: "text", width: 22 },
-      { key: "number", label: "PR", kind: "int", width: 8 },
-      { key: "title", label: "Título", kind: "text", width: 48 },
-      { key: "author", label: "Autor", kind: "text", width: 22 },
-      { key: "state", label: "Estado", kind: "text", width: 16 },
-      { key: "createdAt", label: "Creado", kind: "date", width: 13 },
-      { key: "mergedAt", label: "Mergeado", kind: "date", width: 13 },
-      { key: "closedAt", label: "Cerrado", kind: "date", width: 13 },
-      { key: "additions", label: "Líneas +", kind: "int", width: 10 },
-      { key: "deletions", label: "Líneas −", kind: "int", width: 10 },
-      { key: "changedFiles", label: "Archivos", kind: "int", width: 10 },
-      { key: "mergeHours", label: "Horas a merge", kind: "hours", width: 14 },
-      { key: "url", label: "Enlace", kind: "link", width: 40 },
-    ];
-    rows = prs.map((p) => ({
-      repo: p.repo,
-      number: p.number,
-      title: p.title,
-      author: p.member?.name ?? p.authorLogin,
-      state: p.state === "OPEN" && p.isDraft ? "Borrador" : (STATE_LABEL[p.state] ?? p.state),
-      createdAt: p.createdAtGh,
-      mergedAt: p.mergedAt,
-      closedAt: p.closedAt,
-      additions: p.additions,
-      deletions: p.deletions,
-      changedFiles: p.changedFiles,
-      mergeHours: p.mergedAt ? (p.mergedAt.getTime() - p.createdAtGh.getTime()) / 3_600_000 : null,
-      url: p.url,
-    }));
-  } else {
+  {
     const dim = spec.group as ChartDim;
     const grouped = groupCube(cube, dim);
     columns = [{ key: "group", label: dimLabel[dim], kind: "text", width: 34 }, ...metricCols];

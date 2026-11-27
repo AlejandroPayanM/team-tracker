@@ -8,19 +8,23 @@ import { Icon, type IconName } from "@/components/icons";
 import { SyncBar, type SyncStatus } from "@/components/sync-bar";
 import { TeamSwitcher, type TeamSwitcherProps } from "@/components/team-switcher";
 
-type NavLink = { href: string; label: string; icon: IconName; only?: "admin" | "manage" | "leaders" };
+type NavLink = { href: string; label: string; short?: string; icon: IconName; tab?: boolean; only?: "admin" | "manage" | "leaders" };
 
+/** `tab`: va en la barra inferior del celular; el resto vive en la hoja «Más». */
 const LINKS: NavLink[] = [
-  { href: "/", label: "Resumen", icon: "dashboard" },
-  { href: "/prs", label: "Pull requests", icon: "pr" },
-  { href: "/team", label: "Personas", icon: "team" },
+  { href: "/", label: "Resumen", icon: "dashboard", tab: true },
+  { href: "/prs", label: "Pull requests", short: "PRs", icon: "pr", tab: true },
+  { href: "/team", label: "Personas", icon: "team", tab: true },
+  { href: "/reports", label: "Reportes", icon: "report", tab: true },
   { href: "/teams", label: "Equipos", icon: "board", only: "manage" },
   { href: "/leaders", label: "Líderes", icon: "leaders", only: "leaders" },
   { href: "/weekly", label: "Detalle semanal", icon: "week" },
-  { href: "/reports", label: "Reportes", icon: "report" },
   { href: "/settings", label: "Integraciones", icon: "plug", only: "admin" },
   { href: "/admin", label: "Usuarios", icon: "sliders", only: "admin" },
 ];
+
+// Orden del menú de escritorio (la barra inferior usa el orden de LINKS).
+const DESKTOP_ORDER = ["/", "/prs", "/team", "/teams", "/leaders", "/weekly", "/reports", "/settings", "/admin"];
 
 export type ShellUser = {
   name: string;
@@ -45,29 +49,25 @@ const visibleLinks = (user: ShellUser) =>
 
 const isActive = (pathname: string, href: string) => (href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`));
 
-function Brand({ onClose }: { onClose?: () => void }) {
+function Brand() {
   return (
     <div className="flex h-14 shrink-0 items-center gap-2.5 px-5">
       <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-500 text-white shadow-sm">
         <Icon name="report" className="h-[18px] w-[18px]" />
       </span>
       <span className="font-semibold tracking-tight text-white">Team Tracker</span>
-      {onClose && (
-        <button type="button" onClick={onClose} aria-label="Cerrar menú" className="ml-auto rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white">
-          <Icon name="close" />
-        </button>
-      )}
     </div>
   );
 }
 
-function SidebarBody({ pathname, user, onClose }: { pathname: string; user: ShellUser; onClose?: () => void }) {
+function SidebarBody({ pathname, user }: { pathname: string; user: ShellUser }) {
   const initial = user.name.trim().charAt(0).toUpperCase() || "?";
+  const links = visibleLinks(user).sort((a, b) => DESKTOP_ORDER.indexOf(a.href) - DESKTOP_ORDER.indexOf(b.href));
   return (
     <>
-      <Brand onClose={onClose} />
+      <Brand />
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2" aria-label="Principal">
-        {visibleLinks(user).map((l) => {
+        {links.map((l) => {
           const active = isActive(pathname, l.href);
           return (
             <Link
@@ -109,9 +109,22 @@ function SidebarBody({ pathname, user, onClose }: { pathname: string; user: Shel
   );
 }
 
+const tabBase = "relative flex min-h-14 flex-1 select-none flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition active:bg-slate-100";
+
+function Tab({ active, icon, label, children }: { active: boolean; icon: IconName; label: string; children?: never }) {
+  return (
+    <>
+      <span className={`grid h-7 w-14 place-items-center rounded-full transition ${active ? "bg-indigo-100 text-indigo-700" : "text-slate-500"}`}>
+        <Icon name={icon} className="h-[22px] w-[22px]" />
+      </span>
+      <span className={active ? "text-indigo-700" : "text-slate-500"}>{label}</span>
+    </>
+  );
+}
+
 /**
- * Estructura de toda la app: barra lateral fija en escritorio (≥ 1024 px) y cajón deslizable en celular y tablet.
- * La barra superior queda fija y lleva el estado de sincronización.
+ * Estructura de toda la app. Escritorio (≥ 1024 px): barra lateral fija. Celular y tablet: barra de pestañas inferior
+ * como en una app nativa (las 4 pantallas de uso diario) y una hoja «Más» que sube desde abajo con el resto.
  */
 export function AppShell({
   user,
@@ -126,13 +139,13 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const menuButton = useRef<HTMLButtonElement>(null);
+  const moreButton = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
 
-  // El cajón se cierra al navegar.
+  // La hoja se cierra al navegar.
   useEffect(() => setOpen(false), [pathname]);
 
-  // Con el cajón abierto: Esc lo cierra, el fondo no se desplaza y al cerrar el foco vuelve al botón.
+  // Con la hoja abierta: Esc la cierra, el fondo no se desplaza y al cerrar el foco vuelve al botón.
   useEffect(() => {
     if (open) {
       const prev = document.body.style.overflow;
@@ -147,14 +160,18 @@ export function AppShell({
     }
     if (wasOpen.current) {
       wasOpen.current = false;
-      menuButton.current?.focus();
+      moreButton.current?.focus();
     }
   }, [open]);
 
-  const current = visibleLinks(user).find((l) => isActive(pathname, l.href))?.label ?? (pathname.startsWith("/account") ? "Mi cuenta" : "Team Tracker");
+  const links = visibleLinks(user);
+  const tabs = links.filter((l) => l.tab);
+  const more = links.filter((l) => !l.tab);
+  const moreActive = pathname.startsWith("/account") || more.some((l) => isActive(pathname, l.href));
+  const initial = user.name.trim().charAt(0).toUpperCase() || "?";
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-dvh">
       <a
         href="#contenido"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[70] focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg"
@@ -167,42 +184,119 @@ export function AppShell({
         <SidebarBody pathname={pathname} user={user} />
       </aside>
 
-      {/* Celular y tablet */}
-      {open && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menú de navegación">
-          <button type="button" aria-label="Cerrar menú" className="absolute inset-0 bg-slate-950/60" onClick={() => setOpen(false)} />
-          <div className="absolute inset-y-0 left-0 flex w-[84%] max-w-72 animate-[slide-in_.18s_ease-out] flex-col bg-slate-900 shadow-2xl">
-            <SidebarBody pathname={pathname} user={user} onClose={() => setOpen(false)} />
-          </div>
-        </div>
-      )}
-
       <div className="lg:pl-60">
-        <header data-app-chrome className="sticky top-0 z-20 flex min-h-14 items-center gap-2 border-b border-slate-200 bg-white/90 px-3 backdrop-blur sm:px-6">
-          <button
-            ref={menuButton}
-            type="button"
-            className="btn-ghost !px-2.5 lg:hidden"
-            aria-label="Abrir menú"
-            aria-expanded={open}
-            onClick={() => setOpen(true)}
-          >
-            <Icon name="menu" />
-          </button>
-          <span className="truncate text-sm font-semibold text-slate-800 lg:hidden">{current}</span>
-          <div className="ml-auto flex min-w-0 shrink items-center gap-2">
-            {teamSwitcher && <TeamSwitcher {...teamSwitcher} />}
-            {!user.mustChangePassword && (
-              <div className="shrink-0">
-                <SyncBar initial={syncStatus} />
-              </div>
-            )}
+        <header data-app-chrome className="pt-safe-top sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+          <div className="flex min-h-12 items-center gap-2 px-3 sm:px-6 lg:min-h-14">
+            <Link href="/" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="Team Tracker, ir al resumen">
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-white shadow-sm">
+                <Icon name="report" className="h-[18px] w-[18px]" />
+              </span>
+              <span className="hidden text-sm font-semibold tracking-tight text-slate-900 min-[400px]:inline">Team Tracker</span>
+            </Link>
+            <div className="ml-auto flex min-w-0 shrink items-center gap-2">
+              {teamSwitcher && <TeamSwitcher {...teamSwitcher} />}
+              {!user.mustChangePassword && (
+                <div className="shrink-0">
+                  <SyncBar initial={syncStatus} />
+                </div>
+              )}
+            </div>
           </div>
         </header>
-        <main id="contenido" className="mx-auto w-full max-w-6xl space-y-6 px-4 py-5 sm:px-6 sm:py-8">
+        <main
+          id="contenido"
+          key={pathname}
+          className="mx-auto w-full max-w-6xl animate-[fade-up_.22s_ease-out] space-y-5 px-4 pb-nav pt-4 sm:space-y-6 sm:px-6 sm:pt-8 lg:pb-8"
+        >
           {children}
         </main>
       </div>
+
+      {/* Celular y tablet: barra de pestañas inferior */}
+      <nav data-app-chrome aria-label="Principal" className="pb-safe-nav fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur lg:hidden">
+        <div className="mx-auto flex max-w-xl">
+          {user.mustChangePassword ? (
+            <>
+              <Link href="/account" aria-current="page" className={tabBase}>
+                <Tab active icon="user" label="Mi cuenta" />
+              </Link>
+              <form action={logoutAction} className="flex flex-1">
+                <button type="submit" className={`${tabBase} w-full`}>
+                  <Tab active={false} icon="logout" label="Salir" />
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              {tabs.map((l) => {
+                const active = isActive(pathname, l.href);
+                return (
+                  <Link key={l.href} href={l.href} aria-current={active ? "page" : undefined} className={tabBase}>
+                    <Tab active={active} icon={l.icon} label={l.short ?? l.label} />
+                  </Link>
+                );
+              })}
+              <button ref={moreButton} type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} className={tabBase}>
+                <Tab active={moreActive || open} icon="more" label="Más" />
+              </button>
+            </>
+          )}
+        </div>
+      </nav>
+
+      {open && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Más opciones">
+          <button type="button" aria-label="Cerrar" className="absolute inset-0 animate-[fade-in_.15s_ease-out] bg-slate-950/50" onClick={() => setOpen(false)} />
+          <div className="pb-safe absolute inset-x-0 bottom-0 mx-auto max-h-[88dvh] max-w-xl animate-[sheet-up_.22s_ease-out] overflow-y-auto rounded-t-2xl bg-white shadow-2xl">
+            <div className="sticky top-0 z-10 bg-white pb-1 pt-2">
+              <div className="mx-auto h-1.5 w-10 rounded-full bg-slate-200" aria-hidden />
+            </div>
+            <Link
+              href="/account"
+              className="mx-3 mt-1 flex min-h-14 items-center gap-3 rounded-xl bg-slate-50 px-3 active:bg-slate-100"
+              aria-current={pathname.startsWith("/account") ? "page" : undefined}
+            >
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-indigo-100 font-semibold text-indigo-700">{initial}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{user.name}</span>
+                <span className="block truncate text-xs text-slate-500">
+                  {user.roleLabel} · Mi cuenta
+                </span>
+              </span>
+              <Icon name="right" className="h-4 w-4 shrink-0 text-slate-400" />
+            </Link>
+
+            {more.length > 0 && (
+              <ul className="grid grid-cols-3 gap-2 px-3 pt-3">
+                {more.map((l) => {
+                  const active = isActive(pathname, l.href);
+                  return (
+                    <li key={l.href}>
+                      <Link
+                        href={l.href}
+                        aria-current={active ? "page" : undefined}
+                        className={`flex h-full min-h-24 flex-col items-center justify-center gap-2 rounded-xl border px-2 py-3 text-center text-xs font-medium transition active:scale-95 ${
+                          active ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-700 active:bg-slate-50"
+                        }`}
+                      >
+                        <Icon name={l.icon} className="h-6 w-6" />
+                        {l.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            <form action={logoutAction} className="p-3">
+              <button type="submit" className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl text-sm font-medium text-slate-600 active:bg-slate-100">
+                <Icon name="logout" className="h-5 w-5" />
+                Cerrar sesión
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -33,6 +33,29 @@ export const DEFAULT_METRICS: MetricKey[] = [
 export const GROUPS = { person: "Persona", team: "Equipo", repo: "Repositorio", week: "Semana", detail: "Detalle de PRs" } as const;
 export type GroupBy = keyof typeof GROUPS;
 
+// ───────── Listado de PRs (group = "detail") ─────────
+
+export const PR_STATES = { OPEN: "Abiertos", DRAFT: "Borradores", MERGED: "Mergeados", CLOSED: "Cerrados sin merge" } as const;
+export type PrStateKey = keyof typeof PR_STATES;
+
+export const DATE_BY = {
+  any: "Creados o mergeados en el periodo",
+  created: "Creados en el periodo",
+  merged: "Mergeados en el periodo",
+  closed: "Cerrados sin merge en el periodo",
+  all: "Sin límite de fechas",
+} as const;
+export type DateBy = keyof typeof DATE_BY;
+
+export const SORTS = {
+  created_desc: "Más recientes primero",
+  created_asc: "Más antiguos primero",
+  merged_desc: "Mergeados más recientes primero",
+  author: "Autor (A–Z)",
+  repo: "Repositorio (A–Z)",
+} as const;
+export type SortKey = keyof typeof SORTS;
+
 export const CHART_TYPES = {
   none: "Sin gráfica",
   bar: "Barras verticales",
@@ -53,6 +76,8 @@ export type ReportSpec = {
   group: GroupBy;
   metrics: MetricKey[];
   chart: { type: ChartType; by: ChartDim; metric: MetricKey; top: number };
+  /** Solo para el listado de PRs (group = "detail"). */
+  prs: { states: PrStateKey[]; dateBy: DateBy; q: string; sort: SortKey };
 };
 
 // ───────── Lectura y validación de parámetros (URL o JSON) ─────────
@@ -86,6 +111,11 @@ export function parseSpec(raw: Raw): ReportSpec {
   const metric = cm && cm in METRICS ? (cm as MetricKey) : DEFAULT_CHART.metric;
   const top = Math.min(25, Math.max(3, Number.parseInt(first(raw.top) ?? "", 10) || DEFAULT_CHART.top));
 
+  const states = [...new Set(arr(raw.st).filter((k): k is PrStateKey => k in PR_STATES))];
+  const dateBy = z.enum(["any", "created", "merged", "closed", "all"]).catch("any").parse(first(raw.db));
+  const sort = z.enum(["created_desc", "created_asc", "merged_desc", "author", "repo"]).catch("created_desc").parse(first(raw.sort));
+  const q = (first(raw.q) ?? "").replace(/\s+/g, " ").trim().slice(0, 100);
+
   return {
     range,
     members,
@@ -93,7 +123,9 @@ export function parseSpec(raw: Raw): ReportSpec {
     includeArchived: first(raw.archived) === "1",
     group,
     metrics: ordered.length ? ordered : DEFAULT_METRICS,
-    chart: { type, by, metric, top },
+    // En el listado no hay gráfica: el listado es la tabla.
+    chart: group === "detail" ? { ...DEFAULT_CHART, type: "none" } : { type, by, metric, top },
+    prs: { states, dateBy, q, sort },
   };
 }
 
@@ -119,6 +151,12 @@ export function specToParams(spec: ReportSpec): URLSearchParams {
   p.set("cb", spec.chart.by);
   p.set("cm", spec.chart.metric);
   p.set("top", String(spec.chart.top));
+  if (spec.group === "detail") {
+    for (const st of spec.prs.states) p.append("st", st);
+    p.set("db", spec.prs.dateBy);
+    p.set("sort", spec.prs.sort);
+    if (spec.prs.q) p.set("q", spec.prs.q);
+  }
   return p;
 }
 

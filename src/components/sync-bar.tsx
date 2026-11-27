@@ -91,7 +91,8 @@ export function SyncBar({ initial }: { initial: SyncStatus }) {
         className={`inline-block h-2 w-2 shrink-0 rounded-full ${working ? "animate-pulse bg-sky-500" : warn ? "bg-amber-500" : "bg-emerald-500"}`}
         aria-hidden
       />
-      <span className="max-w-[9.5rem] truncate sm:max-w-none">
+      {/* En celular solo se muestra el texto si hay algo que decir (sincronizando o error); si no, basta el punto de color. */}
+      <span className={`max-w-[9.5rem] truncate sm:max-w-none ${working || error ? "" : "max-sm:sr-only"}`}>
         {working ? (
           "Sincronizando…"
         ) : error ? (

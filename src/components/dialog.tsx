@@ -44,7 +44,7 @@ export function Dialog({
         onClick={(e) => {
           if (e.target === ref.current) ref.current?.close(); // clic en el fondo oscuro
         }}
-        className="m-auto max-h-[92dvh] w-[min(34rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border-0 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/50"
+        className="m-auto max-h-[92dvh] w-[min(34rem,calc(100vw-1.5rem))] overflow-y-auto overscroll-contain rounded-2xl border-0 bg-white p-0 text-slate-900 shadow-2xl backdrop:bg-slate-950/50 max-sm:mx-0 max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:animate-[sheet-up_.22s_ease-out] max-sm:rounded-b-none"
       >
         {open && (
           <Ctx.Provider value={{ close: () => ref.current?.close() }}>
@@ -62,7 +62,7 @@ export function Dialog({
                 <Icon name="close" />
               </button>
             </div>
-            <div className="space-y-4 p-5">{children}</div>
+            <div className="pb-safe space-y-4 p-5">{children}</div>
           </Ctx.Provider>
         )}
       </dialog>

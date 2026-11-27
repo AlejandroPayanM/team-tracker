@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { movePersonAction, setTeamLeaderAction } from "@/app/admin-actions";
 import { DeleteTeamButton, RenameTeamDialog } from "@/components/admin-forms";
+import { SearchBox } from "@/components/search-box";
+import { fuzzyMatchPrepared, prepare, queryTokens } from "@/lib/fuzzy";
 
 export type BoardTeam = {
   id: string;
@@ -25,6 +27,7 @@ export function TeamBoard({ teams, people: serverPeople, isAdmin }: { teams: Boa
   const [leaders, setLeaders] = useState<Record<string, string | null>>(() => Object.fromEntries(teams.map((t) => [t.id, t.leaderId])));
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [q, setQ] = useState("");
   const [, start] = useTransition();
 
   useEffect(() => setPeople(serverPeople), [serverPeople]);
@@ -61,6 +64,19 @@ export function TeamBoard({ teams, people: serverPeople, isAdmin }: { teams: Boa
 
   const columns: { key: string; team: BoardTeam | null }[] = [...teams.map((t) => ({ key: t.id, team: t })), ...(isAdmin ? [{ key: NONE, team: null }] : [])];
 
+  // Buscador: deja las personas que coinciden; si coincide el nombre del equipo, se muestra completo.
+  const tokens = queryTokens(q);
+  const searching = tokens.length > 0;
+  const hit = (text: string) => fuzzyMatchPrepared(prepare(text), tokens);
+  const view = columns
+    .map(({ key, team }) => {
+      const all = people.filter((p) => (team ? p.teamId === team.id : p.teamId === null));
+      const teamHit = searching && hit(team ? team.name : "Sin equipo");
+      const here = !searching || teamHit ? all : all.filter((p) => hit(p.name));
+      return { key, team, here, total: all.length };
+    })
+    .filter((c) => !searching || c.here.length > 0);
+
   return (
     <div className="space-y-3">
       {error && (
@@ -68,14 +84,25 @@ export function TeamBoard({ teams, people: serverPeople, isAdmin }: { teams: Boa
           {error}
         </p>
       )}
+      <SearchBox
+        value={q}
+        onChange={setQ}
+        placeholder="Buscar persona o equipo…"
+        status={searching ? `${view.reduce((n, c) => n + c.here.length, 0)} persona(s) en ${view.length} equipo(s)` : undefined}
+      />
+      {searching && view.length === 0 && (
+        <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          Ningún resultado para «{q.trim()}». <button type="button" className="font-medium text-indigo-600 hover:underline" onClick={() => setQ("")}>Limpiar búsqueda</button>
+        </p>
+      )}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {columns.map(({ key, team }) => {
-          const here = people.filter((p) => (team ? p.teamId === team.id : p.teamId === null));
+        {view.map(({ key, team, here, total }) => {
           return (
             <Column
               key={key}
               team={team}
               people={here}
+              total={total}
               everyone={people}
               teams={teams}
               teamName={teamName}
@@ -96,6 +123,7 @@ export function TeamBoard({ teams, people: serverPeople, isAdmin }: { teams: Boa
 function Column({
   team,
   people,
+  total,
   everyone,
   teams,
   teamName,
@@ -108,6 +136,8 @@ function Column({
 }: {
   team: BoardTeam | null;
   people: BoardPerson[];
+  /** Personas del equipo sin filtrar (para mostrar «2 de 5» mientras se busca). */
+  total: number;
   everyone: BoardPerson[];
   teams: BoardTeam[];
   teamName: Map<string, string>;
@@ -149,13 +179,14 @@ function Column({
         <div className="min-w-0 flex-1">
           <h2 className="break-words text-base font-semibold">{team ? team.name : "Sin equipo"}</h2>
           <p className="text-xs text-slate-500">
-            {people.length} persona(s){!team && " · solo tú las ves"}
+            {people.length === total ? `${total} persona(s)` : `${people.length} de ${total} persona(s)`}
+            {!team && " · solo tú las ves"}
           </p>
         </div>
         {team && isAdmin && (
           <div className="flex shrink-0 items-center gap-1">
             <RenameTeamDialog id={team.id} name={team.name} />
-            <DeleteTeamButton id={team.id} name={team.name} people={people.length} />
+            <DeleteTeamButton id={team.id} name={team.name} people={total} />
           </div>
         )}
       </div>

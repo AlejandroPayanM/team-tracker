@@ -13,7 +13,15 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent; /* sin el destello gris al tocar: el feedback lo dan los estados :active */
     scroll-behavior: smooth;
+  }
+  a,
+  button,
+  summary,
+  label,
+  select {
+    touch-action: manipulation; /* sin el retraso de 300 ms del doble toque para zoom */
   }
   body {
     background: var(--color-canvas);
@@ -93,8 +101,10 @@
   }
 
   /*
-   * Tabla "responsiva": en pantallas chicas cada fila pasa a ser una tarjeta con sus etiquetas.
-   * Cada <td> debe llevar data-label; un <td data-primary> actúa como título de la tarjeta.
+   * Tabla "responsiva": en pantallas chicas cada fila pasa a ser una tarjeta compacta de dos columnas
+   * (etiqueta pequeña arriba, valor abajo), como en una app móvil.
+   * Cada <td> debe llevar data-label; un <td data-primary> es el título de la tarjeta (ocupa todo el ancho);
+   * data-wide hace que un dato largo ocupe las dos columnas; data-empty-label es para acciones/insignias sin etiqueta.
    */
   @media (max-width: 639px) {
     .rtable thead {
@@ -106,14 +116,10 @@
       white-space: nowrap;
     }
     .rtable,
-    .rtable tbody,
-    .rtable tr,
-    .rtable td {
+    .rtable tbody {
       display: block;
     }
-    .rtable,
-    .rtable tr,
-    .rtable td {
+    .rtable {
       width: 100%;
     }
     /* El cuerpo lleva margen lateral (mx-4): su ancho debe ser automático, no 100 %, o se sale de la pantalla. */
@@ -121,41 +127,42 @@
       width: auto;
     }
     .rtable tbody > tr {
-      margin-bottom: 0.75rem;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem 1rem;
+      margin-bottom: 0.625rem;
       border: 1px solid #e2e8f0;
       border-radius: 0.75rem;
       background: #fff;
-      padding: 0.375rem 0.875rem;
+      padding: 0.75rem 0.875rem;
       box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
     }
     .rtable td {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 1rem;
+      display: block;
+      min-width: 0;
       border: 0;
-      padding: 0.4rem 0;
-      text-align: right;
-    }
-    .rtable td + td {
-      border-top: 1px dashed #eef0f4;
+      padding: 0;
+      text-align: left !important;
+      overflow-wrap: anywhere;
     }
     .rtable td::before {
       content: attr(data-label);
-      flex-shrink: 0;
-      text-align: left;
-      font-size: 0.68rem;
+      display: block;
+      margin-bottom: 0.1rem;
+      font-size: 0.65rem;
       font-weight: 600;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
       text-transform: uppercase;
       color: #64748b;
     }
+    .rtable td[data-primary],
+    .rtable td[data-wide],
+    .rtable td[data-empty-label] {
+      grid-column: 1 / -1;
+    }
     .rtable td[data-primary] {
-      justify-content: flex-start;
-      padding-top: 0.55rem;
       font-size: 0.95rem;
       font-weight: 600;
-      text-align: left;
     }
     .rtable td[data-primary]::before,
     .rtable td[data-empty-label]::before {
@@ -167,20 +174,59 @@
   }
 }
 
-@keyframes slide-in {
+/* Elementos que un buscador (ListFilter) oculta; !important para ganarle a display:grid/flex de las tarjetas. */
+[data-search-hidden] {
+  display: none !important;
+}
+
+/* Pantalla completa abierta (configurar reporte): la barra inferior no debe quedar encima. */
+@media (max-width: 1023px) {
+  body[data-sheet-open] nav[data-app-chrome] {
+    display: none;
+  }
+}
+
+@keyframes fade-in {
   from {
-    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
   }
   to {
     transform: none;
   }
 }
 
-@layer utilities {
-  /* Margen inferior para el borde de pantalla en móviles con "notch". */
-  .pb-safe {
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-  }
+/* Margen inferior para el borde de pantalla en móviles con "notch" / barra de gestos. */
+@utility pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+@utility pt-safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+/* Barra de pestañas inferior: solo respeta la zona de gestos. */
+@utility pb-safe-nav {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Espacio al final del contenido para que la barra inferior no lo tape (barra ≈ 3.5 rem). */
+@utility pb-nav {
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -196,7 +242,7 @@
 
 @media print {
   aside,
-  header[data-app-chrome],
+  [data-app-chrome],
   .no-print {
     display: none !important;
   }
